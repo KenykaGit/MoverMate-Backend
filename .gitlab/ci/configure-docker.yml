@@ -1,19 +1,21 @@
-# Vendored from pipelines/pipelines (jobs/configure-docker.yaml): `docker login` to the
-# Spirit registry on the VM (dp auth service-acc + dp auth configure-docker) over Teleport.
-# Requires .teleport_auth (teleport.yml), DEPLOY_SSH_USER, DEPLOY_VM, SPIRIT_DOCKER_SA_KEY.
-# Rules are set by the consuming job. Deviation from upstream: DP_CLI_VERSION defaults to the
-# dp version of the CI image instead of a pinned 14.1.0, which is no longer downloadable.
+# Based on pipelines/pipelines (jobs/configure-docker.yaml): registry auth for `docker pull`
+# on the VM over Teleport. Requires .teleport_auth (teleport.yml), DEPLOY_SSH_USER,
+# DEPLOY_VM, DEPLOY_DIR, SPIRIT_DOCKER_SA_KEY. Rules are set by the consuming job.
+# Deviation from upstream: upstream installs dp on the VM and runs `dp auth
+# configure-docker`, whose credential helper sends no credentials to
+# registry.spirit.t-education.com (pull gets 401). Instead the CI job writes a docker
+# config with the Spirit IAM token (`dp auth configure-kaniko`, as in .dp_build) and
+# copies it to ${DEPLOY_DIR}/.docker; deploy scripts run docker with DOCKER_CONFIG
+# pointing there. The service account key never leaves CI.
 .configure_docker:
   stage: deploy
   image: registry.spirit.t-education.com/cicd-images/tsh-18:latest
   extends: .teleport_auth
   script:
     - |
-      DP_CLI_VERSION="${DP_CLI_VERSION:-$(dp -v | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n1)}"
-      KEY_B64=$(base64 -w0 "$SPIRIT_DOCKER_SA_KEY")
-      tsh ssh "${DEPLOY_SSH_USER}@${DEPLOY_VM}" "
-        set -e
-        echo $KEY_B64 | base64 -d | sudo tee /tmp/sa-key.json >/dev/null
-        sudo bash -c 'command -v dp >/dev/null || (curl -fsSL https://spirit.t-education.com/cli/prod/${DP_CLI_VERSION}/linux/dp -o /usr/local/bin/dp && chmod +x /usr/local/bin/dp); dp auth service-acc --key-file /tmp/sa-key.json; dp auth configure-docker'
-        sudo rm -f /tmp/sa-key.json
-      "
+      : "${DEPLOY_DIR:?set DEPLOY_DIR}"
+      mkdir -p "$CI_PROJECT_DIR/.docker-vm"
+      dp auth configure-kaniko --config-path "$CI_PROJECT_DIR/.docker-vm/config.json"
+      tsh ssh "${DEPLOY_SSH_USER}@${DEPLOY_VM}" "sudo install -d -m 700 '${DEPLOY_DIR}/.docker' && sudo tee '${DEPLOY_DIR}/.docker/config.json.new' >/dev/null && sudo chmod 600 '${DEPLOY_DIR}/.docker/config.json.new' && sudo mv '${DEPLOY_DIR}/.docker/config.json.new' '${DEPLOY_DIR}/.docker/config.json'" \
+        < "$CI_PROJECT_DIR/.docker-vm/config.json"
+      rm -rf "$CI_PROJECT_DIR/.docker-vm"

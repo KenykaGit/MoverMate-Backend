@@ -155,7 +155,7 @@ deploy:
       tsh ssh "${DEPLOY_SSH_USER}@${DEPLOY_VM}" "sudo bash -s" <<EOF
       set -euo pipefail
       cd '${DEPLOY_DIR}'
-      export IMAGE='${IMAGE_REPO}' IMAGE_TAG='${IMAGE_TAG}'
+      export DOCKER_CONFIG='${DEPLOY_DIR}/.docker' IMAGE='${IMAGE_REPO}' IMAGE_TAG='${IMAGE_TAG}'
       docker compose pull api
       docker compose run --rm migrate
       docker compose up -d --wait api nginx

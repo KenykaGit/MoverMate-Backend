@@ -14,8 +14,9 @@ commit ─▶ MR ─▶ check (параллельно) ─▶ build ─▶ merge
    (шаблоны Spirit лежат в репозитории: [.gitlab/ci/](../.gitlab/ci/)). Версия
    зашивается в образ (`APP_VERSION`) и видна в `/health/ready`. Повторная сборка того же
    коммита безопасна: существующий тег считается успехом.
-4. **Deploy** (кнопка в пайплайне основной ветки; вход на сервер через Teleport, `docker login`
-   на VM настраивает `dp auth configure-docker`) копирует `docker-compose.prod.yml` и
+4. **Deploy** (кнопка в пайплайне основной ветки; вход на сервер через Teleport; CI кладёт на VM
+   docker-конфиг с IAM-токеном Spirit в `$DEPLOY_DIR/.docker`, `docker compose` читает его через
+   `DOCKER_CONFIG`) копирует `docker-compose.prod.yml` и
    `docker/nginx/nginx.conf` в `$DEPLOY_DIR` и выполняет на сервере:
    1. `docker compose pull api`;
    2. `docker compose run --rm migrate` — `alembic upgrade head` тем же образом. Если миграция
@@ -89,13 +90,13 @@ Postgres создаст рядом **пустой** кластер. Поэтом
    оставлен по умолчанию или `LOG_JSON=false`.
 3. На VM: пользователь `DEPLOY_SSH_USER` с беспарольным `sudo` (deploy сам создаёт `$DEPLOY_DIR` и
    отдаёт его этому пользователю), доступ
-   к Teleport для сервисного аккаунта Spirit, исходящий доступ к `spirit.t-education.com`
-   (job ставит `dp`, если его нет) и `curl` для smoke-теста.
+   к Teleport для сервисного аккаунта Spirit, доступ к `registry.spirit.t-education.com` и
+   `curl` для smoke-теста. `dp` на VM не нужен, ключ сервисного аккаунта туда не попадает.
 4. Переменные CI (Spirit → Repository → CI Variables или Settings → CI/CD → Variables):
 
    | Переменная | Тип | Назначение |
    |---|---|---|
-   | `SPIRIT_DOCKER_SA_KEY` | **File**, не protected | JSON-ключ сервисного аккаунта Spirit: push в registry, Teleport, `docker login` на VM. Не protected: нужен и в MR (сборка без push) |
+   | `SPIRIT_DOCKER_SA_KEY` | **File**, не protected | JSON-ключ сервисного аккаунта Spirit: push в registry, Teleport, токен для `docker pull` на VM. Не protected: нужен и в MR (сборка без push) |
    | `DOCKER_ARTIFACTORY_REGISTRY` | Variable | адрес registry Spirit (обычно уже задан на уровне группы) |
    | `DEPLOY_SSH_USER` | Variable | логин на VM, разрешённый ролью Teleport сервисного аккаунта (`Logins` в выводе `tsh login`, например `sa-<group>-spirit-docker-ci`); `root` запрещён |
    | `DEPLOY_VM` | Variable | имя VM в Teleport |
