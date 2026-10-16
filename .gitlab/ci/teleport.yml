@@ -1,0 +1,12 @@
+# Vendored from pipelines/pipelines (jobs/teleport.yaml): Teleport login through Spirit
+# and ~/.ssh/config for tsh ssh/scp. Requires .dp_auth (spirit.yml).
+.teleport_auth:
+  variables:
+    TELEPORT_TENANT: "${CI_PROJECT_ROOT_NAMESPACE}"
+    TELEPORT_PROXY: teleport.t-education.com
+  before_script:
+    - !reference [.dp_auth, before_script]
+    - dp teleport identity --tenant "${TELEPORT_TENANT}" --out ./identity
+    - tsh login --proxy="${TELEPORT_PROXY}" --identity=identity
+    - install -d -m 0700 ~/.ssh
+    - tsh config --proxy="${TELEPORT_PROXY}" > ~/.ssh/config

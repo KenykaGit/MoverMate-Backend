@@ -1,15 +1,12 @@
 # CI/CD: check -> build -> deploy (docs/release.md).
-# Build, registry auth and Teleport/SSH come from the shared templates in
-# pipelines/pipelines (Spirit). Required CI variables: see docs/release.md.
+# Build, registry auth and Teleport/SSH come from the Spirit templates vendored
+# into .gitlab/ci/. Required CI variables: see docs/release.md.
 include:
-  - project: pipelines/pipelines
-    ref: master
-    file:
-      - /jobs/spirit.yaml
-      - /jobs/build.yaml
-      - /jobs/teleport.yaml
-      - /jobs/configure-docker.yaml
-      - /jobs/rules.yaml
+  - local: .gitlab/ci/rules.yml
+  - local: .gitlab/ci/spirit.yml
+  - local: .gitlab/ci/build.yml
+  - local: .gitlab/ci/teleport.yml
+  - local: .gitlab/ci/configure-docker.yml
 
 stages:
   - check
@@ -159,7 +156,6 @@ deploy:
     - .configure_docker
     - .rules-master-manual
   stage: deploy
-  rules: !reference [.rules-master-manual, rules]
   needs: [build:image]
   resource_group: production
   environment:

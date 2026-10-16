@@ -1,0 +1,6 @@
+# Vendored from pipelines/pipelines (jobs/spirit.yaml): Spirit service-account auth.
+# Requires SPIRIT_DOCKER_SA_KEY (File variable).
+.dp_auth:
+  before_script:
+    - dp -v
+    - dp auth service-acc --key-file "$SPIRIT_DOCKER_SA_KEY"

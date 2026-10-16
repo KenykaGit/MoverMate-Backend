@@ -1,0 +1,51 @@
+# Vendored from pipelines/pipelines (jobs/build.yaml): image build and push with Kaniko.
+# Requires .dp_auth (spirit.yml), SPIRIT_DOCKER_SA_KEY and DOCKER_ARTIFACTORY_REGISTRY.
+.dp_build:
+  image: registry.spirit.t-education.com/cicd-images/base-kaniko:latest
+  stage: build
+  interruptible: true
+  variables:
+    DOCKER_CONFIG: /kaniko/.docker
+    DOCKERFILE_PATH: $CI_PROJECT_DIR/Dockerfile
+    CONTEXT: $CI_PROJECT_DIR
+    IMAGE_NAME: ${DOCKER_ARTIFACTORY_REGISTRY}/${CI_PROJECT_ROOT_NAMESPACE}/${CI_PROJECT_NAME}:${CI_COMMIT_SHORT_SHA}
+    KANIKO_CACHE: "true"
+    KANIKO_ARGS: ""
+  before_script:
+    - !reference [.dp_auth, before_script]
+    - dp auth configure-kaniko
+    - |
+      run_build() {
+        set +e
+        out=$(executor "$@" 2>&1)
+        rc=$?
+        set -e
+
+        echo "$out"
+
+        if [ "$rc" -ne 0 ] && echo "$out" | grep -q "MANIFEST_FOR_TAG_EXISTS"; then
+          echo ">> image already exists in registry - treating as success"
+          return 0
+        fi
+
+        return "$rc"
+      }
+  script:
+    - |
+      echo ">> build $IMAGE_NAME"
+      echo ">> dockerfile: $DOCKERFILE_PATH"
+      echo ">> context: $CONTEXT"
+
+      set -- \
+        --dockerfile "$DOCKERFILE_PATH" \
+        --context "$CONTEXT" \
+        --destination "$IMAGE_NAME" \
+        --cache="$KANIKO_CACHE" \
+        --skip-push-permission-check
+
+      # KANIKO_ARGS: extra executor flags separated by spaces (word splitting is intended).
+      if [ -n "$KANIKO_ARGS" ]; then
+        set -- "$@" $KANIKO_ARGS
+      fi
+
+      run_build "$@"

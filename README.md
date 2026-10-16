@@ -116,7 +116,8 @@ tests/
 1. `check` запускает параллельно `lint`, `typecheck`, `architecture`, `test`, `migrations`
    и `nginx -t`.
 2. `build` собирает Docker-образ. В merge request образ только собирается, на основной
-   ветке ещё и публикуется в registry Spirit (Kaniko, шаблоны `pipelines/pipelines`).
+   ветке ещё и публикуется в registry Spirit (Kaniko, шаблоны Spirit в
+   [.gitlab/ci/](.gitlab/ci/)).
 3. `deploy` запускается вручную через Teleport: миграции, затем `up --wait`, reload nginx и
    smoke-тест версии.
 

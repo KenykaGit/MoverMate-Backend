@@ -11,7 +11,7 @@ commit ─▶ MR ─▶ check (параллельно) ─▶ build ─▶ merge
    (`make install`) запускает ruff, mypy, import-linter и unit-тесты на каждый коммит.
 2. **MR:** параллельные проверки, затем сборка образа без публикации.
 3. **Основная ветка:** Kaniko публикует образ `${DOCKER_ARTIFACTORY_REGISTRY}/<namespace>/<project>:<short-sha>`
-   (шаблоны [pipelines/pipelines](https://gitlab.t-education.com/pipelines/pipelines)). Версия
+   (шаблоны Spirit лежат в репозитории: [.gitlab/ci/](../.gitlab/ci/)). Версия
    зашивается в образ (`APP_VERSION`) и видна в `/health/ready`. Повторная сборка того же
    коммита безопасна: существующий тег считается успехом.
 4. **Deploy** (кнопка в пайплайне основной ветки; вход на сервер через Teleport, `docker login`
