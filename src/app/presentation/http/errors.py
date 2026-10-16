@@ -16,7 +16,6 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.application.exceptions import (
     ApplicationError,
-    EmailAlreadyTakenError,
     IdempotencyKeyReusedError,
     InvalidCredentialsError,
     InvalidPaginationError,
@@ -29,7 +28,6 @@ from app.application.exceptions import (
 )
 from app.domain.common.errors import DomainError
 from app.domain.users.errors import (
-    InvalidEmailError,
     InvalidPasswordError,
     InvalidPasswordHashError,
     InvalidUsernameError,
@@ -54,13 +52,11 @@ class ErrorSpec:
 ERROR_SPECS: dict[type[Exception], ErrorSpec] = {
     # domain rules
     DomainError: ErrorSpec(status.HTTP_422_UNPROCESSABLE_CONTENT, "invalid_value"),
-    InvalidEmailError: ErrorSpec(status.HTTP_422_UNPROCESSABLE_CONTENT, "invalid_email"),
     InvalidUsernameError: ErrorSpec(status.HTTP_422_UNPROCESSABLE_CONTENT, "invalid_username"),
     InvalidPasswordError: ErrorSpec(status.HTTP_422_UNPROCESSABLE_CONTENT, "invalid_password"),
     # application outcomes
     NotFoundError: ErrorSpec(status.HTTP_404_NOT_FOUND, "not_found"),
     UserNotFoundError: ErrorSpec(status.HTTP_404_NOT_FOUND, "user_not_found"),
-    EmailAlreadyTakenError: ErrorSpec(status.HTTP_409_CONFLICT, "email_taken"),
     UsernameAlreadyTakenError: ErrorSpec(status.HTTP_409_CONFLICT, "username_taken"),
     InvalidCredentialsError: ErrorSpec(status.HTTP_401_UNAUTHORIZED, "invalid_credentials"),
     InvalidRefreshTokenError: ErrorSpec(status.HTTP_401_UNAUTHORIZED, "invalid_refresh_token"),

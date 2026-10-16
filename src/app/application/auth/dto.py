@@ -4,8 +4,7 @@ from datetime import datetime, timedelta
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class LoginDTO:
-    login: str
-    """Email or username."""
+    username: str
     password: str = field(repr=False)
 
 

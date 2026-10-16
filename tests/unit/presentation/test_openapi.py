@@ -22,7 +22,6 @@ PROTECTED = {
     "GET /api/v1/users/me",
     "DELETE /api/v1/users/me",
     "PUT /api/v1/users/me/password",
-    "PUT /api/v1/users/me/email",
     "PUT /api/v1/users/me/username",
 }
 PUBLIC = {
@@ -122,7 +121,6 @@ def test_versioned_operations_document_the_error_contract(schema: Schema, name: 
         ("POST /api/v1/auth/register", "409"),
         ("POST /api/v1/auth/login", "401"),
         ("POST /api/v1/auth/refresh", "401"),
-        ("PUT /api/v1/users/me/email", "409"),
         ("PUT /api/v1/users/me/username", "409"),
         ("GET /health/ready", "503"),
     ],

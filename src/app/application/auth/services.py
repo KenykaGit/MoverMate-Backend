@@ -16,13 +16,13 @@ from app.domain.common.errors import DomainError
 from app.domain.common.ids import UserId
 from app.domain.tokens.entity import RefreshToken, TokenFamilyId
 from app.domain.users.entity import User
-from app.domain.users.value_objects import Email, Username
+from app.domain.users.value_objects import Username
 
 logger = logging.getLogger(__name__)
 
 
 class CredentialsVerifier:
-    """Checks a login/password pair and keeps the stored password hash up to date."""
+    """Checks a username/password pair and keeps the stored password hash up to date."""
 
     def __init__(
         self,
@@ -32,23 +32,23 @@ class CredentialsVerifier:
         self._user_repository = user_repository
         self._password_hasher = password_hasher
 
-    async def verify(self, login: str, password: str) -> User:
-        """The active user with these credentials; `login` is an email or username.
+    async def verify(self, username: str, password: str) -> User:
+        """The active user with these credentials.
 
         A hash made with outdated parameters (e.g. after raising the argon2
         cost) is replaced right away: a successful login is the only moment the
         plain password is known. The change is staged; the caller commits.
 
         Raises:
-            InvalidCredentialsError: for an unknown login (a deleted user included)
+            InvalidCredentialsError: for an unknown username (a deleted user included)
                 and a wrong password alike, in the same time, so the two cannot
                 be told apart.
         """
-        user = await self._find_user(login)
+        user = await self._find_user(username)
         if user is None:
             await self._password_hasher.dummy_verify(password)
-            # Neither the login nor the password is logged: a mistyped password
-            # in the login field would end up in the logs.
+            # Neither the username nor the password is logged: a mistyped password
+            # in the username field would end up in the logs.
             logger.info("login_failed", extra={"reason": "unknown_login"})
             raise InvalidCredentialsError
 
@@ -62,14 +62,11 @@ class CredentialsVerifier:
             logger.info("password_rehashed", extra={"user_id": str(user.id)})
         return user
 
-    async def _find_user(self, login: str) -> User | None:
-        # Usernames cannot contain "@", so the two kinds of login never clash.
+    async def _find_user(self, username: str) -> User | None:
         try:
-            if "@" in login:
-                return await self._user_repository.get_by_email(Email(login))
-            return await self._user_repository.get_by_username(Username(login))
+            return await self._user_repository.get_by_username(Username(username))
         except DomainError:
-            return None  # a malformed login cannot belong to anyone
+            return None  # a malformed username cannot belong to anyone
 
 
 class TokenPairIssuer:

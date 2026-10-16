@@ -24,38 +24,52 @@ class TestRegister:
     async def test_returns_the_normalized_user_without_secrets(self, client: AsyncClient) -> None:
         response = await client.post(
             f"{API}/auth/register",
-            json={"email": " John@Example.COM ", "username": "John_Doe", "password": PASSWORD},
+            json={"username": " John_Doe ", "password": PASSWORD},
         )
 
         assert response.status_code == 201
         body = response.json()
-        assert set(body) == {"id", "email", "username"}
-        assert (body["email"], body["username"]) == ("john@example.com", "john_doe")
+        assert set(body) == {"id", "username"}
+        assert body["username"] == "john_doe"
 
-    async def test_taken_email(self, client: AsyncClient) -> None:
+    async def test_taken_username(self, client: AsyncClient) -> None:
         await register(client)
 
         response = await client.post(
-            f"{API}/auth/register",
-            json={"email": "JOHN@example.com", "username": "other", "password": PASSWORD},
+            f"{API}/auth/register", json={"username": "JOHN_DOE", "password": PASSWORD}
         )
 
         assert response.status_code == 409
-        assert_error(response.json(), "email_taken")
+        assert_error(response.json(), "username_taken")
+
+    async def test_email_is_not_accepted(self, client: AsyncClient) -> None:
+        response = await client.post(
+            f"{API}/auth/register",
+            json={"email": "john@example.com", "username": "john_doe", "password": PASSWORD},
+        )
+
+        assert response.status_code == 422
+        assert_error(response.json(), "validation_error")
+
+    async def test_username_cannot_be_an_email(self, client: AsyncClient) -> None:
+        response = await client.post(
+            f"{API}/auth/register", json={"username": "john@example.com", "password": PASSWORD}
+        )
+
+        assert response.status_code == 422
+        assert_error(response.json(), "invalid_username")
 
     async def test_domain_validation_is_reported_as_422(self, client: AsyncClient) -> None:
         response = await client.post(
             f"{API}/auth/register",
-            json={"email": "john@example.com", "username": "john_doe", "password": "short"},
+            json={"username": "john_doe", "password": "short"},
         )
 
         assert response.status_code == 422
         assert_error(response.json(), "invalid_password")
 
     async def test_malformed_body(self, client: AsyncClient) -> None:
-        response = await client.post(
-            f"{API}/auth/register", json={"email": "john@example.com", "extra": 1}
-        )
+        response = await client.post(f"{API}/auth/register", json={"extra": 1})
 
         assert response.status_code == 422
         body = response.json()
@@ -65,24 +79,34 @@ class TestRegister:
 
 
 class TestLogin:
-    async def test_by_email_or_username(self, client: AsyncClient) -> None:
+    async def test_by_username(self, client: AsyncClient) -> None:
         await register(client)
 
-        for login_value in ("john@example.com", "JOHN_DOE"):
-            tokens = await login(client, login_value)
+        for username in ("john_doe", "JOHN_DOE"):
+            tokens = await login(client, username)
             assert tokens["token_type"] == "bearer"
             assert 0 < int(tokens["expires_in"]) <= 15 * 60
 
-    async def test_wrong_password_and_unknown_login_look_the_same(
+    async def test_email_is_not_a_login(self, client: AsyncClient) -> None:
+        await register(client)
+
+        response = await client.post(
+            f"{API}/auth/login", json={"username": "john@example.com", "password": PASSWORD}
+        )
+
+        assert response.status_code == 401
+        assert_error(response.json(), "invalid_credentials")
+
+    async def test_wrong_password_and_unknown_username_look_the_same(
         self, client: AsyncClient
     ) -> None:
         await register(client)
 
         wrong = await client.post(
-            f"{API}/auth/login", json={"login": "john_doe", "password": "wrong password"}
+            f"{API}/auth/login", json={"username": "john_doe", "password": "wrong password"}
         )
         unknown = await client.post(
-            f"{API}/auth/login", json={"login": "nobody", "password": "wrong password"}
+            f"{API}/auth/login", json={"username": "nobody", "password": "wrong password"}
         )
 
         for response in (wrong, unknown):

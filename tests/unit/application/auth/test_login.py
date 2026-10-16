@@ -35,17 +35,17 @@ def login(
     return Login(credentials_verifier, token_pair_issuer, uow)
 
 
-@pytest.mark.parametrize("login_value", ["john@example.com", "JOHN@example.com", "John_Doe"])
-async def test_issues_token_pair_by_email_or_username(
+@pytest.mark.parametrize("username", ["john_doe", "John_Doe", "  JOHN_DOE "])
+async def test_issues_token_pair_by_username(
     login: Login,
     access_tokens: FakeAccessTokenService,
     refresh_tokens: InMemoryRefreshTokenRepository,
     refresh_token_generator: FakeRefreshTokenGenerator,
     uow: FakeUnitOfWork,
     user: User,
-    login_value: str,
+    username: str,
 ) -> None:
-    tokens = await login(LoginDTO(login=login_value, password=PASSWORD))
+    tokens = await login(LoginDTO(username=username, password=PASSWORD))
 
     assert access_tokens.read_user_id(tokens.access_token) == user.id
     [stored] = refresh_tokens.active_for(user.id)
@@ -58,8 +58,8 @@ async def test_issues_token_pair_by_email_or_username(
 async def test_each_login_is_a_separate_session(
     login: Login, refresh_tokens: InMemoryRefreshTokenRepository, user: User
 ) -> None:
-    await login(LoginDTO(login="john_doe", password=PASSWORD))
-    await login(LoginDTO(login="john_doe", password=PASSWORD))
+    await login(LoginDTO(username="john_doe", password=PASSWORD))
+    await login(LoginDTO(username="john_doe", password=PASSWORD))
 
     sessions = refresh_tokens.active_for(user.id)
     assert len(sessions) == 2
@@ -86,7 +86,7 @@ class TestRehash:
     ) -> None:
         user = await self.seed(users, PASSWORD, outdated=True)
 
-        await login(LoginDTO(login="john_doe", password=PASSWORD))
+        await login(LoginDTO(username="john_doe", password=PASSWORD))
 
         assert users.users[user.id].password_hash == FakePasswordHasher.hash_of(PASSWORD)
         assert uow.commits == 1, "the new hash is committed together with the session"
@@ -98,7 +98,7 @@ class TestRehash:
     ) -> None:
         user = await self.seed(users, PASSWORD, outdated=False)
 
-        await login(LoginDTO(login="john_doe", password=PASSWORD))
+        await login(LoginDTO(username="john_doe", password=PASSWORD))
 
         assert hasher.hash_calls == 0
         assert users.users[user.id].password_hash == FakePasswordHasher.hash_of(PASSWORD)
@@ -109,7 +109,7 @@ class TestRehash:
         """The policy applies when a password is set, never at login."""
         user = await self.seed(users, "short", outdated=True)
 
-        await login(LoginDTO(login="john_doe", password="short"))
+        await login(LoginDTO(username="john_doe", password="short"))
 
         assert users.users[user.id].password_hash == FakePasswordHasher.hash_of("short")
 
@@ -119,7 +119,7 @@ class TestRehash:
         user = await self.seed(users, PASSWORD, outdated=True)
 
         with pytest.raises(InvalidCredentialsError):
-            await login(LoginDTO(login="john_doe", password="wrong password"))
+            await login(LoginDTO(username="john_doe", password="wrong password"))
 
         assert hasher.hash_calls == 0
         assert users.users[user.id].password_hash == FakePasswordHasher.hash_of(
@@ -132,18 +132,26 @@ async def test_wrong_password(
     login: Login, uow: FakeUnitOfWork, refresh_tokens: InMemoryRefreshTokenRepository
 ) -> None:
     with pytest.raises(InvalidCredentialsError):
-        await login(LoginDTO(login="john_doe", password="wrong password"))
+        await login(LoginDTO(username="john_doe", password="wrong password"))
 
     assert refresh_tokens.tokens == {}
     assert uow.commits == 0
 
 
-@pytest.mark.parametrize("login_value", ["nobody", "nobody@example.com", "@@", "x"])
-async def test_unknown_login_costs_as_much_as_a_wrong_password(
-    login: Login, hasher: FakePasswordHasher, login_value: str
+@pytest.mark.parametrize("username", ["nobody", "@@", "x"])
+async def test_unknown_username_costs_as_much_as_a_wrong_password(
+    login: Login, hasher: FakePasswordHasher, username: str
 ) -> None:
     with pytest.raises(InvalidCredentialsError):
-        await login(LoginDTO(login=login_value, password=PASSWORD))
+        await login(LoginDTO(username=username, password=PASSWORD))
+
+    assert hasher.dummy_verify_calls == 1
+
+
+@pytest.mark.usefixtures("user")
+async def test_email_is_not_a_login(login: Login, hasher: FakePasswordHasher) -> None:
+    with pytest.raises(InvalidCredentialsError):
+        await login(LoginDTO(username="john@example.com", password=PASSWORD))
 
     assert hasher.dummy_verify_calls == 1
 
@@ -155,17 +163,17 @@ async def test_deleted_user_cannot_log_in(
     await users.update(user)
 
     with pytest.raises(InvalidCredentialsError):
-        await login(LoginDTO(login="john_doe", password=PASSWORD))
+        await login(LoginDTO(username="john_doe", password=PASSWORD))
     assert hasher.dummy_verify_calls == 1
 
 
 @pytest.mark.usefixtures("user")
 async def test_audit_events_never_contain_credentials(login: Login, log_events: LogEvents) -> None:
     with pytest.raises(InvalidCredentialsError):
-        await login(LoginDTO(login="john_doe", password="wrong password"))
+        await login(LoginDTO(username="john_doe", password="wrong password"))
     with pytest.raises(InvalidCredentialsError):
-        await login(LoginDTO(login="nobody", password="wrong password"))
-    await login(LoginDTO(login="john_doe", password=PASSWORD))
+        await login(LoginDTO(username="nobody", password="wrong password"))
+    await login(LoginDTO(username="john_doe", password=PASSWORD))
 
     events = log_events()
     reasons = [e["reason"] for e in events if e["event"] == "login_failed"]

@@ -168,7 +168,7 @@ class TestReuseDetection:
         refresh_token_generator: FakeRefreshTokenGenerator,
         user: User,
     ) -> None:
-        other = make_user(email="other@example.com", username="other")
+        other = make_user(username="other")
         await store(refresh_tokens, refresh_token_generator, user, revoked=True)
         await store(refresh_tokens, refresh_token_generator, other, token="others")
 

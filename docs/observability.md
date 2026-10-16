@@ -52,7 +52,7 @@ SQLAlchemy) проходят через один конвейер. Каждая 
 содержит `request_id`, а после аутентификации ещё и `user_id`.
 
 ```json
-{"event": "http_request", "method": "PUT", "path": "/api/v1/users/me/email", "route": "/api/v1/users/me/email", "status": 409, "duration_ms": 6.1, "request_id": "f111…", "user_id": "0191…", "level": "info", "logger": "app.access", "timestamp": "…"}
+{"event": "http_request", "method": "PUT", "path": "/api/v1/users/me/username", "route": "/api/v1/users/me/username", "status": 409, "duration_ms": 6.1, "request_id": "f111…", "user_id": "0191…", "level": "info", "logger": "app.access", "timestamp": "…"}
 ```
 
 ### События
@@ -64,7 +64,7 @@ SQLAlchemy) проходят через один конвейер. Каждая 
 | `user_registered`, `user_logged_in` | info | `user_id` | аудит |
 | `user_logged_out` | info | `user_id`, `family_id` | аудит: завершена одна сессия |
 | `password_rehashed` | info | `user_id` | хэш пароля пересчитан с текущими параметрами argon2 при входе |
-| `login_failed` | info | `reason=unknown_login\|wrong_password` | без логина и пароля: опечатка в поле логина могла бы оказаться паролем |
+| `login_failed` | info | `reason=unknown_login\|wrong_password` | без имени пользователя и пароля: опечатка в поле имени пользователя могла бы оказаться паролем |
 | **`refresh_token_reused`** | **warning** | `user_id`, `family_id`, `token_id` | возможна кража сессии; эта сессия (семья токенов) отозвана, остальные работают |
 | `password_changed`, `user_deleted`, `user_restored` | info | `user_id` | аудит |
 | `redis_unavailable` | warning | `op`, `error` | операция Redis не удалась, сработал fail-open |

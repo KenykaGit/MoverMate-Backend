@@ -8,7 +8,7 @@ from app.application.common.pagination import Page
 class RequestSchema(BaseModel):
     """Base of request bodies: only the shape is checked here.
 
-    Business rules (email format, title length, password policy...) live in
+    Business rules (username format, title length, password policy...) live in
     the domain; violations are reported as 422 in the same error format.
     """
 
@@ -21,7 +21,7 @@ class ErrorDetail(BaseModel):
 
 
 class ErrorBody(BaseModel):
-    code: str = Field(examples=["email_taken"], description="Stable, machine-readable")
+    code: str = Field(examples=["username_taken"], description="Stable, machine-readable")
     message: str = Field(description="For humans; may change")
     details: list[ErrorDetail] = Field(default_factory=list)
     request_id: str | None = Field(default=None, description="Same as the X-Request-ID header")

@@ -2,7 +2,6 @@ import pytest
 
 from app.domain.users.entity import User
 from app.domain.users.errors import (
-    InvalidEmailError,
     InvalidPasswordError,
     InvalidPasswordHashError,
     InvalidUsernameError,
@@ -11,34 +10,11 @@ from app.domain.users.value_objects import (
     PASSWORD_MAX_LENGTH,
     PASSWORD_MIN_LENGTH,
     USERNAME_MAX_LENGTH,
-    Email,
     PasswordHash,
     RawPassword,
     Username,
 )
 from tests.factories import make_user
-
-
-class TestEmail:
-    """The value object; the syntax rules are in test_email_address.py."""
-
-    def test_is_normalized_to_trimmed_lowercase(self) -> None:
-        assert Email("  John.Doe@Example.COM ").value == "john.doe@example.com"
-
-    def test_equal_after_normalization(self) -> None:
-        assert Email("JOHN@example.com") == Email("john@example.com")
-
-    @pytest.mark.parametrize(
-        "value", ["", "john", "john@", "@example.com", "john@example", "jo hn@example.com"]
-    )
-    def test_rejects_malformed(self, value: str) -> None:
-        with pytest.raises(InvalidEmailError):
-            Email(value)
-
-    def test_is_immutable(self) -> None:
-        email = Email("john@example.com")
-        with pytest.raises(AttributeError):
-            email.value = "other@example.com"  # type: ignore[misc]
 
 
 class TestUsername:
@@ -110,11 +86,9 @@ class TestUser:
     def test_changes(self) -> None:
         user = make_user()
 
-        user.change_email(Email("new@example.com"))
         user.change_username(Username("new_name"))
         user.change_password(PasswordHash("new-hash"))
 
-        assert user.email == Email("new@example.com")
         assert user.username == Username("new_name")
         assert user.password_hash == PasswordHash("new-hash")
 
@@ -124,7 +98,6 @@ class TestEntityIdentity:
         user = make_user()
         changed = User(
             id=user.id,
-            email=Email("other@example.com"),
             username=Username("other"),
             password_hash=PasswordHash("other"),
             is_active=False,

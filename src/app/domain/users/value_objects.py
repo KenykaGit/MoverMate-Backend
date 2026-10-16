@@ -3,7 +3,6 @@
 import re
 from dataclasses import dataclass, field
 
-from app.domain.users.email_address import normalize_email
 from app.domain.users.errors import (
     InvalidPasswordError,
     InvalidPasswordHashError,
@@ -20,25 +19,8 @@ PASSWORD_MAX_LENGTH = 128
 
 
 @dataclass(frozen=True, slots=True)
-class Email:
-    """Case-insensitive email address in canonical form (see `normalize_email`):
-    trimmed, NFC, lowercase, internationalized domains in Unicode."""
-
-    value: str
-
-    def __post_init__(self) -> None:
-        object.__setattr__(self, "value", normalize_email(self.value))
-
-    def __str__(self) -> str:
-        return self.value
-
-
-@dataclass(frozen=True, slots=True)
 class Username:
-    """Case-insensitive username, stored trimmed and in lowercase.
-
-    Cannot contain "@", so a login string is never both an email and a username.
-    """
+    """Case-insensitive username, stored trimmed and in lowercase."""
 
     value: str
 

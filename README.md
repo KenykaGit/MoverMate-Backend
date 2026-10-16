@@ -11,9 +11,9 @@
   JSON-логи со сквозным `request_id`, раздельные liveness/readiness, миграции с двусторонней
   проверкой и CI/CD.
 
-Готовый домен — пользователи: регистрация, вход по email или username, сессии с ротацией
-refresh-токенов и отзывом по семьям, перехэширование паролей при входе, смена пароля, email
-и username, мягкое удаление. Бизнес-модули продукта добавляются рядом по чек-листу
+Готовый домен — пользователи: регистрация и вход по username, сессии с ротацией
+refresh-токенов и отзывом по семьям, перехэширование паролей при входе, смена пароля и
+username, мягкое удаление. Бизнес-модули продукта добавляются рядом по чек-листу
 ([architecture.md](docs/architecture.md#как-добавить-модуль)).
 
 Стек (версии закреплены точно, см. [release.md](docs/release.md#обновление-версий-инфраструктуры)):
@@ -38,9 +38,9 @@ curl localhost:8000/health/ready
 ```bash
 B=localhost:8000/api/v1
 curl -X POST $B/auth/register -H 'content-type: application/json' \
-  -d '{"email":"me@example.com","username":"me_demo","password":"correct horse battery"}'
+  -d '{"username":"me_demo","password":"correct horse battery"}'
 TOKENS=$(curl -s -X POST $B/auth/login -H 'content-type: application/json' \
-  -d '{"login":"me_demo","password":"correct horse battery"}')
+  -d '{"username":"me_demo","password":"correct horse battery"}')
 curl $B/users/me -H "Authorization: Bearer $(echo "$TOKENS" | jq -r .access_token)"
 curl -X POST $B/auth/refresh -H 'content-type: application/json' \
   -d "{\"refresh_token\":\"$(echo "$TOKENS" | jq -r .refresh_token)\"}"
@@ -116,8 +116,8 @@ tests/
 1. `check` запускает параллельно `lint`, `typecheck`, `architecture`, `test`, `migrations`
    и `nginx -t`.
 2. `build` собирает Docker-образ. В merge request образ только собирается, на основной
-   ветке и тегах ещё и публикуется.
-3. `deploy` запускается вручную по SSH: миграции, затем `up --wait`, reload nginx и
+   ветке ещё и публикуется в registry Spirit (Kaniko, шаблоны `pipelines/pipelines`).
+3. `deploy` запускается вручную через Teleport: миграции, затем `up --wait`, reload nginx и
    smoke-тест версии.
 
 Процесс выпуска и отката описан в [docs/release.md](docs/release.md).
@@ -166,7 +166,6 @@ Clean Architecture, Value Objects, use cases пользователей и ау�
 - обновление стека до последних стабильных версий с точным закреплением;
 - удаление демонстрационного модуля `tasks`;
 - семейства refresh-токенов и перехэширование паролей при входе;
-- проверка email на уровне email-validator;
 - тесты DI-контейнера и OpenAPI;
 - этот раздел и таблица критериев.
 

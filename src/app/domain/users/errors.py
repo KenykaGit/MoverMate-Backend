@@ -1,10 +1,6 @@
 from app.domain.common.errors import DomainError
 
 
-class InvalidEmailError(DomainError):
-    """The email address does not satisfy domain rules."""
-
-
 class InvalidUsernameError(DomainError):
     """The username does not satisfy domain rules."""
 

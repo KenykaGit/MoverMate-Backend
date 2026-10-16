@@ -20,29 +20,28 @@ class Session:
 async def register(
     client: AsyncClient,
     *,
-    email: str = "john@example.com",
     username: str = "john_doe",
     password: str = PASSWORD,
 ) -> dict[str, str]:
     response = await client.post(
-        f"{API}/auth/register", json={"email": email, "username": username, "password": password}
+        f"{API}/auth/register", json={"username": username, "password": password}
     )
     assert response.status_code == 201, response.text
     body: dict[str, str] = response.json()
     return body
 
 
-async def login(client: AsyncClient, login: str, password: str = PASSWORD) -> dict[str, str]:
-    response = await client.post(f"{API}/auth/login", json={"login": login, "password": password})
+async def login(client: AsyncClient, username: str, password: str = PASSWORD) -> dict[str, str]:
+    response = await client.post(
+        f"{API}/auth/login", json={"username": username, "password": password}
+    )
     assert response.status_code == 200, response.text
     body: dict[str, str] = response.json()
     return body
 
 
-async def signed_up(
-    client: AsyncClient, *, email: str = "john@example.com", username: str = "john_doe"
-) -> Session:
+async def signed_up(client: AsyncClient, *, username: str = "john_doe") -> Session:
     """Register a user and log in."""
-    user = await register(client, email=email, username=username)
+    user = await register(client, username=username)
     tokens = await login(client, username)
     return Session(user["id"], tokens["access_token"], tokens["refresh_token"])

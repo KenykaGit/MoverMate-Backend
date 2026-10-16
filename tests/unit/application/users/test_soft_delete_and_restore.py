@@ -1,9 +1,6 @@
 import pytest
 
-from app.application.exceptions import (
-    EmailAlreadyTakenError,
-    UserNotFoundError,
-)
+from app.application.exceptions import UsernameAlreadyTakenError, UserNotFoundError
 from app.application.users.restore_user import RestoreUser
 from app.application.users.soft_delete_user import SoftDeleteUser
 from tests.factories import make_refresh_token, make_user
@@ -81,13 +78,13 @@ class TestRestore:
         with pytest.raises(UserNotFoundError):
             await restore(make_user().id)
 
-    async def test_fails_if_email_was_taken_meanwhile(
+    async def test_fails_if_username_was_taken_meanwhile(
         self, restore: RestoreUser, users: InMemoryUserRepository
     ) -> None:
         deleted = make_user(is_active=False)
         await users.add(deleted)
-        await users.add(make_user(username="newcomer"))  # same email, now active
+        await users.add(make_user())  # same username, now active
 
-        with pytest.raises(EmailAlreadyTakenError):
+        with pytest.raises(UsernameAlreadyTakenError):
             await restore(deleted.id)
         assert users.users[deleted.id].is_active is False

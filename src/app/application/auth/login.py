@@ -28,7 +28,7 @@ class Login:
         Raises:
             InvalidCredentialsError: see CredentialsVerifier.verify.
         """
-        user = await self._credentials_verifier.verify(data.login, data.password)
+        user = await self._credentials_verifier.verify(data.username, data.password)
         tokens = await self._token_pair_issuer.issue(
             user.id, family_id=new_token_family(), now=utc_now()
         )

@@ -13,7 +13,6 @@ from uuid import UUID
 
 from app.application.common.uow import AbstractUnitOfWork
 from app.application.exceptions import (
-    EmailAlreadyTakenError,
     UsernameAlreadyTakenError,
     UserNotFoundError,
 )
@@ -38,7 +37,7 @@ from app.application.interfaces.user_repository import AbstractUserRepository
 from app.domain.common.ids import UserId
 from app.domain.tokens.entity import RefreshToken, RefreshTokenId, TokenFamilyId
 from app.domain.users.entity import User
-from app.domain.users.value_objects import Email, PasswordHash, RawPassword, Username
+from app.domain.users.value_objects import PasswordHash, RawPassword, Username
 
 
 class InMemoryUserRepository(AbstractUserRepository):
@@ -56,9 +55,6 @@ class InMemoryUserRepository(AbstractUserRepository):
         if user is None or not (user.is_active or include_deleted):
             return None
         return replace(user)
-
-    async def get_by_email(self, email: Email) -> User | None:
-        return self._first_active(lambda user: user.email == email)
 
     async def get_by_username(self, username: Username) -> User | None:
         return self._first_active(lambda user: user.username == username)
@@ -81,8 +77,6 @@ class InMemoryUserRepository(AbstractUserRepository):
         if not user.is_active:
             return
         others = [other for other in self._active() if other.id != user.id]
-        if any(other.email == user.email for other in others):
-            raise EmailAlreadyTakenError(user.email)
         if any(other.username == user.username for other in others):
             raise UsernameAlreadyTakenError(user.username)
 

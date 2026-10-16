@@ -22,8 +22,7 @@ class RestoreUser:
 
         Raises:
             UserNotFoundError: there is no user with this id at all.
-            EmailAlreadyTakenError: the email was taken while the user was deleted.
-            UsernameAlreadyTakenError: same for the username.
+            UsernameAlreadyTakenError: the username was taken while the user was deleted.
         """
         user = await self._user_repository.get_by_id(UserId(user_id), include_deleted=True)
         if user is None:

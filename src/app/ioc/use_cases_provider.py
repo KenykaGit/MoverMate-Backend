@@ -6,7 +6,6 @@ from app.application.auth.logout import Logout
 from app.application.auth.refresh_tokens import RefreshTokens
 from app.application.auth.services import CredentialsVerifier, TokenPairIssuer
 from app.application.common.idempotency import IdempotentExecutor
-from app.application.users.change_email import ChangeEmail
 from app.application.users.change_password import ChangePassword
 from app.application.users.change_username import ChangeUsername
 from app.application.users.get_user import GetUser
@@ -27,7 +26,6 @@ class UseCaseProvider(Provider):
         RegisterUser,
         GetUser,
         ChangePassword,
-        ChangeEmail,
         ChangeUsername,
         SoftDeleteUser,
         RestoreUser,

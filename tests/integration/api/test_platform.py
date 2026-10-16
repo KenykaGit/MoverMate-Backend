@@ -105,7 +105,7 @@ async def test_auth_rate_limit_is_stricter(client_factory: ClientFactory) -> Non
     limits = RateLimitSettings(api_per_minute=100, auth_per_minute=2)
     async with client_factory(rate_limit=limits) as client:
         await register(client)
-        attempt = {"login": "john_doe", "password": "wrong password"}
+        attempt = {"username": "john_doe", "password": "wrong password"}
         second = await client.post(f"{API}/auth/login", json=attempt)
         third = await client.post(f"{API}/auth/login", json={**attempt, "password": PASSWORD})
         me = await client.get(f"{API}/users/me")

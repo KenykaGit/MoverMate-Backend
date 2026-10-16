@@ -11,7 +11,7 @@ async def test_returns_active_user() -> None:
 
     result = await GetUser(InMemoryUserRepository([user]))(user.id)
 
-    assert (result.id, result.email, result.username) == (user.id, "john@example.com", "john_doe")
+    assert (result.id, result.username) == (user.id, "john_doe")
 
 
 async def test_missing_user_is_not_found() -> None:

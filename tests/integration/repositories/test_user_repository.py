@@ -5,13 +5,12 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.application.exceptions import (
-    EmailAlreadyTakenError,
     UsernameAlreadyTakenError,
     UserNotFoundError,
 )
 from app.domain.common.ids import UserId
 from app.domain.users.entity import User
-from app.domain.users.value_objects import Email, PasswordHash, Username
+from app.domain.users.value_objects import PasswordHash, Username
 from app.infrastructure.db.repositories.user import SqlAlchemyUserRepository
 from tests.factories import make_user, user_state
 
@@ -52,38 +51,26 @@ class TestAdd:
 
         assert await load(session_maker, user.id) is None
 
-    @pytest.mark.parametrize(
-        ("email", "username", "error"),
-        [
-            ("JOHN@example.com", "other", EmailAlreadyTakenError),
-            ("other@example.com", "John_Doe", UsernameAlreadyTakenError),
-        ],
-    )
-    async def test_rejects_values_taken_by_an_active_user(
-        self,
-        session_maker: SessionMaker,
-        session: AsyncSession,
-        email: str,
-        username: str,
-        error: type[Exception],
+    async def test_rejects_username_taken_by_an_active_user(
+        self, session_maker: SessionMaker, session: AsyncSession
     ) -> None:
         await save(session_maker, make_user())
 
-        with pytest.raises(error):
-            await SqlAlchemyUserRepository(session).add(make_user(email=email, username=username))
+        with pytest.raises(UsernameAlreadyTakenError):
+            await SqlAlchemyUserRepository(session).add(make_user(username="John_Doe"))
 
     async def test_conflict_keeps_the_rest_of_the_transaction(
         self, session_maker: SessionMaker
     ) -> None:
         """The SAVEPOINT confines the failure: the session stays usable."""
         await save(session_maker, make_user())
-        jane = make_user(email="jane@example.com", username="jane")
-        duplicate = make_user(username="other")
+        jane = make_user(username="jane")
+        duplicate = make_user()
 
         async with session_maker() as session:
             repository = SqlAlchemyUserRepository(session)
             await repository.add(jane)
-            with pytest.raises(EmailAlreadyTakenError):
+            with pytest.raises(UsernameAlreadyTakenError):
                 await repository.add(duplicate)
             await session.commit()
 
@@ -93,9 +80,9 @@ class TestAdd:
     async def test_rejects_duplicate_from_a_concurrent_transaction(
         self, session_maker: SessionMaker
     ) -> None:
-        """Both transactions passed a get_by_email() check, then race to insert."""
+        """Both transactions passed a get_by_username() check, then race to insert."""
         john = make_user()
-        rival = make_user(username="rival")
+        rival = make_user()
 
         async with session_maker() as first, session_maker() as second:
             await SqlAlchemyUserRepository(first).add(john)
@@ -104,7 +91,7 @@ class TestAdd:
             await asyncio.sleep(0.1)
             await first.commit()
 
-            with pytest.raises(EmailAlreadyTakenError):
+            with pytest.raises(UsernameAlreadyTakenError):
                 await rival_insert
 
         assert await load(session_maker, john.id) == john
@@ -117,7 +104,6 @@ class TestAdd:
         await save(session_maker, user)
         same_id = User(
             id=user.id,
-            email=Email("jane@example.com"),
             username=Username("jane"),
             password_hash=PasswordHash("hash"),
             is_active=True,
@@ -144,20 +130,22 @@ class TestSoftDelete:
         repository = SqlAlchemyUserRepository(session)
 
         assert await repository.get_by_id(deleted.id) is None
-        assert await repository.get_by_email(deleted.email) is None
         assert await repository.get_by_username(deleted.username) is None
         stored = await load(session_maker, deleted.id)
         assert stored is not None
         assert user_state(stored) == user_state(deleted)
 
     @pytest.mark.usefixtures("deleted")
-    async def test_frees_email_and_username_at_once(self, session_maker: SessionMaker) -> None:
+    async def test_frees_the_username_at_once(self, session_maker: SessionMaker) -> None:
         newcomer = make_user()
 
         await save(session_maker, newcomer)
 
         async with session_maker() as session:
-            assert await SqlAlchemyUserRepository(session).get_by_email(newcomer.email) == newcomer
+            assert (
+                await SqlAlchemyUserRepository(session).get_by_username(newcomer.username)
+                == newcomer
+            )
 
     async def test_several_deleted_users_may_share_values(
         self, session_maker: SessionMaker, deleted: User
@@ -172,14 +160,14 @@ class TestSoftDelete:
         assert await load(session_maker, deleted.id) is not None
         assert await load(session_maker, another.id) is not None
 
-    async def test_restore_fails_if_the_email_was_taken_meanwhile(
+    async def test_restore_fails_if_the_username_was_taken_meanwhile(
         self, session_maker: SessionMaker, deleted: User
     ) -> None:
-        await save(session_maker, make_user(username="newcomer"))
+        await save(session_maker, make_user())
 
         async with session_maker() as session:
             deleted.restore()
-            with pytest.raises(EmailAlreadyTakenError):
+            with pytest.raises(UsernameAlreadyTakenError):
                 await SqlAlchemyUserRepository(session).update(deleted)
             await session.commit()
 
@@ -194,7 +182,6 @@ class TestUpdate:
         await save(session_maker, user)
         changed = User(
             id=user.id,
-            email=Email("new@example.com"),
             username=Username("new_name"),
             password_hash=PasswordHash("new-hash"),
             is_active=True,

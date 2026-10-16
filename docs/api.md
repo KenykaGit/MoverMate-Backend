@@ -15,13 +15,12 @@
 
 | Метод | Путь | Успех | Основные ошибки |
 |---|---|---|---|
-| POST | `/api/v1/auth/register` `{email, username, password}` | 201 `UserResponse` | 409 `email_taken`/`username_taken`, 422 |
-| POST | `/api/v1/auth/login` `{login, password}` (login — email или username) | 200 `TokenPairResponse` | 401 `invalid_credentials` |
+| POST | `/api/v1/auth/register` `{username, password}` | 201 `UserResponse` | 409 `username_taken`, 422 |
+| POST | `/api/v1/auth/login` `{username, password}` | 200 `TokenPairResponse` | 401 `invalid_credentials` |
 | POST | `/api/v1/auth/refresh` `{refresh_token}` | 200 `TokenPairResponse` | 401 `invalid_refresh_token` |
 | POST | `/api/v1/auth/logout` `{refresh_token}` | 204, сессия завершена | — (идемпотентно) |
 | GET | `/api/v1/users/me` | 200 `UserResponse` | 401 |
 | PUT | `/api/v1/users/me/password` `{current_password, new_password}` | 204, все сессии завершены | 401 `invalid_credentials`, 422 |
-| PUT | `/api/v1/users/me/email` `{new_email, password}` | 200 `UserResponse` | 401, 409 `email_taken`, 422 |
 | PUT | `/api/v1/users/me/username` `{new_username}` | 200 `UserResponse` | 409 `username_taken`, 422 |
 | DELETE | `/api/v1/users/me` | 204, мягкое удаление | 401 |
 | GET | `/health/live` | 200 `{"status":"ok"}` | — |
@@ -56,14 +55,14 @@
 | HTTP | `code` | Когда |
 |---|---|---|
 | 401 | `not_authenticated` | нет токена, токен невалиден или истёк, пользователь удалён |
-| 401 | `invalid_credentials` | неверный логин или пароль (неотличимы намеренно) |
+| 401 | `invalid_credentials` | неверное имя пользователя или пароль (неотличимы намеренно) |
 | 401 | `invalid_refresh_token` | refresh-токен неизвестен, истёк, отозван или использован повторно |
 | 404 | `user_not_found` | нет объекта |
 | 404 / 405 | `not_found`, `method_not_allowed` | нет маршрута или метода |
-| 409 | `email_taken`, `username_taken` | значение занято активным пользователем |
+| 409 | `username_taken` | имя пользователя занято активным пользователем |
 | 409 | `request_in_progress` | запрос с тем же `Idempotency-Key` ещё выполняется |
 | 422 | `validation_error` | тело, query или заголовок не соответствуют схеме |
-| 422 | `invalid_email`, `invalid_username`, `invalid_password`, `invalid_value` | значение нарушает правило домена |
+| 422 | `invalid_username`, `invalid_password`, `invalid_value` | значение нарушает правило домена |
 | 422 | `invalid_pagination` | `limit` вне 1..100 или `offset < 0` |
 | 422 | `idempotency_key_reused` | ключ уже использован с другим телом запроса |
 | 429 | `rate_limited` | превышен лимит, см. `Retry-After` |
@@ -76,23 +75,14 @@
 
 1. **Pydantic** проверяет форму запроса: типы, обязательные поля, отсутствие лишних полей
    (`extra="forbid"`). Ошибка → `validation_error`.
-2. **Value Objects домена** проверяют бизнес-правила: синтаксис email, длину username и
-   пароля. Ошибка → код конкретного правила.
-
-Email проверяется по тем же правилам, что pydantic `EmailStr` (библиотека email-validator,
-без DNS-запросов); тест сверяет результаты на наборе адресов. Принимаются международные
-адреса (`иван@пример.рф`), отклоняются:
-- кавычки в локальной части и IP-литералы;
-- зарезервированные зоны (`.test`, `.local`, `.localhost`, `.invalid`, `.onion`, `.arpa`);
-- домен верхнего уровня из одних цифр;
-- невидимые и управляющие символы;
-- локальная часть длиннее 64 байт.
+2. **Value Objects домена** проверяют бизнес-правила: формат и длину username,
+   длину пароля. Ошибка → код конкретного правила.
 
 Правила не дублируются в схемах, и ни один путь в обход API (например, CLI) их не минует.
 
-Нормализация выполняется в домене: email и username хранятся в нижнем регистре без
-пробелов по краям. Email дополнительно приводится к NFC, а домен хранится в Unicode, поэтому
-`ivan@xn--e1afmkfd.xn--p1ai` и `Ivan@Пример.РФ` — один и тот же адрес. Пароль не обрезается: пробелы — его законная часть.
+Нормализация выполняется в домене: username хранится в нижнем регистре без пробелов по
+краям, поэтому `John_Doe` и `john_doe` — одно имя. Символ `@` в username недопустим. Пароль не
+обрезается: пробелы — его законная часть.
 
 ## Пагинация
 

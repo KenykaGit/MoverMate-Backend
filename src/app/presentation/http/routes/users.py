@@ -1,15 +1,13 @@
 from dishka.integrations.fastapi import DishkaRoute, FromDishka
 from fastapi import APIRouter, status
 
-from app.application.users.change_email import ChangeEmail
 from app.application.users.change_password import ChangePassword
 from app.application.users.change_username import ChangeUsername
-from app.application.users.dto import ChangeEmailDTO, ChangePasswordDTO, ChangeUsernameDTO
+from app.application.users.dto import ChangePasswordDTO, ChangeUsernameDTO
 from app.application.users.soft_delete_user import SoftDeleteUser
 from app.presentation.http.auth import CurrentUser
 from app.presentation.http.errors import error_doc
 from app.presentation.http.schemas.users import (
-    ChangeEmailRequest,
     ChangePasswordRequest,
     ChangeUsernameRequest,
     UserResponse,
@@ -22,7 +20,7 @@ router = APIRouter(
     responses=error_doc(status.HTTP_401_UNAUTHORIZED, "Not authenticated"),
 )
 
-_CONFLICT = error_doc(status.HTTP_409_CONFLICT, "Value taken")
+_CONFLICT = error_doc(status.HTTP_409_CONFLICT, "Username taken")
 
 
 @router.get("/me")
@@ -44,18 +42,6 @@ async def change_password(
     )
 
 
-@router.put("/me/email", responses=_CONFLICT)
-async def change_email(
-    body: ChangeEmailRequest, user: CurrentUser, change_email: FromDishka[ChangeEmail]
-) -> UserResponse:
-    changed = await change_email(
-        ChangeEmailDTO(
-            user_id=user.id, new_email=body.new_email, password=body.password.get_secret_value()
-        )
-    )
-    return UserResponse.from_dto(changed)
-
-
 @router.put("/me/username", responses=_CONFLICT)
 async def change_username(
     body: ChangeUsernameRequest, user: CurrentUser, change_username: FromDishka[ChangeUsername]
@@ -68,6 +54,6 @@ async def change_username(
 
 @router.delete("/me", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_me(user: CurrentUser, soft_delete_user: FromDishka[SoftDeleteUser]) -> None:
-    """Soft-delete the account and end every session; the email and username
-    become free at once."""
+    """Soft-delete the account and end every session; the username
+    becomes free at once."""
     await soft_delete_user(user.id)

@@ -10,11 +10,7 @@ async def test_me(client: AsyncClient) -> None:
 
     response = await client.get(f"{API}/users/me", headers=session.headers)
 
-    assert response.json() == {
-        "id": session.user_id,
-        "email": "john@example.com",
-        "username": "john_doe",
-    }
+    assert response.json() == {"id": session.user_id, "username": "john_doe"}
 
 
 async def test_change_password_ends_every_session(client: AsyncClient) -> None:
@@ -31,9 +27,11 @@ async def test_change_password_ends_every_session(client: AsyncClient) -> None:
         f"{API}/auth/refresh", json={"refresh_token": session.refresh_token}
     )
     assert refreshed.status_code == 401
-    old = await client.post(f"{API}/auth/login", json={"login": "john_doe", "password": PASSWORD})
+    old = await client.post(
+        f"{API}/auth/login", json={"username": "john_doe", "password": PASSWORD}
+    )
     new = await client.post(
-        f"{API}/auth/login", json={"login": "john_doe", "password": NEW_PASSWORD}
+        f"{API}/auth/login", json={"username": "john_doe", "password": NEW_PASSWORD}
     )
     assert (old.status_code, new.status_code) == (401, 200)
 
@@ -51,28 +49,32 @@ async def test_change_password_requires_the_current_one(client: AsyncClient) -> 
     assert response.json()["error"]["code"] == "invalid_credentials"
 
 
-async def test_change_email_and_username(client: AsyncClient) -> None:
+async def test_change_username(client: AsyncClient) -> None:
     session = await signed_up(client)
-    await register(client, email="taken@example.com", username="taken")
+    await register(client, username="taken")
 
     taken = await client.put(
-        f"{API}/users/me/email",
-        json={"new_email": "taken@example.com", "password": PASSWORD},
-        headers=session.headers,
-    )
-    email = await client.put(
-        f"{API}/users/me/email",
-        json={"new_email": "New@Example.com", "password": PASSWORD},
-        headers=session.headers,
+        f"{API}/users/me/username", json={"new_username": "Taken"}, headers=session.headers
     )
     username = await client.put(
         f"{API}/users/me/username", json={"new_username": "Johnny"}, headers=session.headers
     )
 
     assert taken.status_code == 409
-    assert taken.json()["error"]["code"] == "email_taken"
-    assert email.json()["email"] == "new@example.com"
-    assert username.json()["username"] == "johnny"
+    assert taken.json()["error"]["code"] == "username_taken"
+    assert username.json() == {"id": session.user_id, "username": "johnny"}
+
+
+async def test_change_email_endpoint_is_gone(client: AsyncClient) -> None:
+    session = await signed_up(client)
+
+    response = await client.put(
+        f"{API}/users/me/email",
+        json={"new_email": "new@example.com", "password": PASSWORD},
+        headers=session.headers,
+    )
+
+    assert response.status_code == 404
 
 
 async def test_soft_delete(client: AsyncClient) -> None:
@@ -88,8 +90,10 @@ async def test_soft_delete(client: AsyncClient) -> None:
         f"{API}/auth/refresh", json={"refresh_token": session.refresh_token}
     )
     assert refreshed.status_code == 401
-    login = await client.post(f"{API}/auth/login", json={"login": "john_doe", "password": PASSWORD})
+    login = await client.post(
+        f"{API}/auth/login", json={"username": "john_doe", "password": PASSWORD}
+    )
     assert login.status_code == 401
-    # The partial unique indexes free the email and username at once.
+    # The partial unique index frees the username at once.
     newcomer = await register(client)
     assert newcomer["id"] != session.user_id

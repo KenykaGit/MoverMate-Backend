@@ -28,15 +28,14 @@ async def connection(engine: AsyncEngine) -> AsyncIterator[AsyncConnection]:
 async def insert_user(connection: AsyncConnection, **overrides: Any) -> str:
     values = {
         "id": str(uuid4()),
-        "email": f"{uuid4().hex}@example.com",
         "username": uuid4().hex[:16],
         "password_hash": "hash",
         "is_active": True,
     } | overrides
     await connection.execute(
         text(
-            "INSERT INTO users (id, email, username, password_hash, is_active) "
-            "VALUES (:id, :email, :username, :password_hash, :is_active)"
+            "INSERT INTO users (id, username, password_hash, is_active) "
+            "VALUES (:id, :username, :password_hash, :is_active)"
         ),
         values,
     )
@@ -99,28 +98,26 @@ async def test_partial_index_predicates_match_the_models(engine: AsyncEngine) ->
         actual
         == expected
         == {
-            "uq_users_email_active": "is_active",
             "uq_users_username_active": "is_active",
         }
     )
 
 
-async def test_soft_deleted_users_do_not_block_their_email(connection: AsyncConnection) -> None:
-    await insert_user(connection, email="john@example.com", username="john", is_active=False)
-    await insert_user(connection, email="john@example.com", username="john", is_active=False)
-    await insert_user(connection, email="john@example.com", username="john")
+async def test_soft_deleted_users_do_not_block_their_username(connection: AsyncConnection) -> None:
+    await insert_user(connection, username="john", is_active=False)
+    await insert_user(connection, username="john", is_active=False)
+    await insert_user(connection, username="john")
 
     with pytest.raises(IntegrityError) as exc_info:
         async with connection.begin_nested():
-            await insert_user(connection, email="john@example.com", username="other")
+            await insert_user(connection, username="john")
 
-    assert violated_constraint(exc_info.value) == "uq_users_email_active"
+    assert violated_constraint(exc_info.value) == "uq_users_username_active"
 
 
 @pytest.mark.parametrize(
     ("values", "constraint"),
     [
-        ({"email": "John@Example.com"}, "ck_users_email_lowercase"),
         ({"username": "John"}, "ck_users_username_lowercase"),
     ],
 )

@@ -25,7 +25,7 @@ _UNAUTHORIZED = error_doc(status.HTTP_401_UNAUTHORIZED, "Rejected")
     "/register",
     status_code=status.HTTP_201_CREATED,
     dependencies=[Depends(auth_rate_limit)],
-    responses=error_doc(status.HTTP_409_CONFLICT, "Email or username taken"),
+    responses=error_doc(status.HTTP_409_CONFLICT, "Username taken"),
 )
 async def register(body: RegisterRequest, register_user: FromDishka[RegisterUser]) -> UserResponse:
     user = await register_user(body.to_dto())

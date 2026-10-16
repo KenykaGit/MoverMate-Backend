@@ -9,23 +9,19 @@ from app.presentation.http.schemas.common import RequestSchema
 
 
 class RegisterRequest(RequestSchema):
-    email: str
     username: str
     password: SecretStr
 
     def to_dto(self) -> RegisterUserDTO:
-        return RegisterUserDTO(
-            email=self.email, username=self.username, password=self.password.get_secret_value()
-        )
+        return RegisterUserDTO(username=self.username, password=self.password.get_secret_value())
 
 
 class LoginRequest(RequestSchema):
-    login: str
-    """Email or username."""
+    username: str
     password: SecretStr
 
     def to_dto(self) -> LoginDTO:
-        return LoginDTO(login=self.login, password=self.password.get_secret_value())
+        return LoginDTO(username=self.username, password=self.password.get_secret_value())
 
 
 class RefreshTokenRequest(RequestSchema):

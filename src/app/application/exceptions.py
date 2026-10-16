@@ -6,7 +6,7 @@ of a scenario: something is missing, taken, or the caller is not allowed in.
 
 from uuid import UUID
 
-from app.domain.users.value_objects import Email, Username
+from app.domain.users.value_objects import Username
 
 
 class ApplicationError(Exception):
@@ -23,12 +23,6 @@ class UserNotFoundError(NotFoundError):
         self.user_id = user_id
 
 
-class EmailAlreadyTakenError(ApplicationError):
-    def __init__(self, email: Email) -> None:
-        super().__init__(f"Email {email} is already taken")
-        self.email = email
-
-
 class UsernameAlreadyTakenError(ApplicationError):
     def __init__(self, username: Username) -> None:
         super().__init__(f"Username {username} is already taken")
@@ -36,10 +30,10 @@ class UsernameAlreadyTakenError(ApplicationError):
 
 
 class InvalidCredentialsError(ApplicationError):
-    """Wrong login or password, or a deleted account.
+    """Wrong username or password, or a deleted account.
 
     Deliberately carries no details: telling these cases apart would reveal
-    which logins are registered.
+    which usernames are registered.
     """
 
     def __init__(self) -> None:

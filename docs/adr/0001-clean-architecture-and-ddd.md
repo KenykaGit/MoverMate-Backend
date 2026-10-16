@@ -12,7 +12,7 @@
 
 - Пять слоёв: `domain` → `application` → `infrastructure` → `presentation` и точка сборки
   (`ioc`, `config`, `main`). Зависимости направлены только внутрь.
-- **Domain** — чистый Python. Value Objects (`Email`, `Username`, `RawPassword`,
+- **Domain** — чистый Python. Value Objects (`Username`, `RawPassword`,
   `PasswordHash`) нормализуют и валидируют себя сами. Сущности —
   `dataclass(slots=True, kw_only=True, eq=False)` с равенством по id (базовый класс `Entity`).
   Время передаётся в методы явно (`now=`), поэтому домен детерминирован.

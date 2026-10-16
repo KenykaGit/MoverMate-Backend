@@ -1,5 +1,6 @@
 # Production stack, used by the `deploy` CI job on the target server.
-# Required in $DEPLOY_DIR/.env on the server (never committed):
+# Required in $DEPLOY_DIR/.env on the server (written by the deploy job from CI variables,
+# never committed):
 #   POSTGRES_USER, POSTGRES_PASSWORD, POSTGRES_DB, AUTH__SECRET_KEY (>= 32 random chars),
 #   CORS_ORIGINS; optionally RATE_LIMIT__API_PER_MINUTE, RATE_LIMIT__AUTH_PER_MINUTE.
 # Provided by the deploy job: IMAGE (registry path), IMAGE_TAG (git short sha).

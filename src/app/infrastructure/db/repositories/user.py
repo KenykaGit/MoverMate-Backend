@@ -6,18 +6,16 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.application.exceptions import (
-    EmailAlreadyTakenError,
     UsernameAlreadyTakenError,
     UserNotFoundError,
 )
 from app.application.interfaces.user_repository import AbstractUserRepository
 from app.domain.common.ids import UserId
 from app.domain.users.entity import User
-from app.domain.users.value_objects import Email, Username
+from app.domain.users.value_objects import Username
 from app.infrastructure.db.errors import violated_constraint
 from app.infrastructure.db.mappers.user import UserMapper
 from app.infrastructure.db.models.user import (
-    ACTIVE_EMAIL_UNIQUE_INDEX,
     ACTIVE_USERNAME_UNIQUE_INDEX,
     UserModel,
 )
@@ -37,9 +35,6 @@ class SqlAlchemyUserRepository(AbstractUserRepository):
         if model is None or not (model.is_active or include_deleted):
             return None
         return UserMapper.to_domain(model)
-
-    async def get_by_email(self, email: Email) -> User | None:
-        return await self._get_active(UserModel.email == email.value)
 
     async def get_by_username(self, username: Username) -> User | None:
         return await self._get_active(UserModel.username == username.value)
@@ -71,8 +66,6 @@ class SqlAlchemyUserRepository(AbstractUserRepository):
                 yield
         except IntegrityError as error:
             constraint = violated_constraint(error)
-            if constraint == ACTIVE_EMAIL_UNIQUE_INDEX:
-                raise EmailAlreadyTakenError(user.email) from error
             if constraint == ACTIVE_USERNAME_UNIQUE_INDEX:
                 raise UsernameAlreadyTakenError(user.username) from error
             raise

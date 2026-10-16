@@ -64,7 +64,7 @@ async def test_concurrent_revocations_succeed_exactly_once(session_maker: Sessio
 
 async def test_revoke_all_for_user(session_maker: SessionMaker) -> None:
     user = await saved_user(session_maker)
-    other = make_user(email="other@example.com", username="other")
+    other = make_user(username="other")
     async with session_maker() as session:
         await SqlAlchemyUserRepository(session).add(other)
         tokens = SqlAlchemyRefreshTokenRepository(session)

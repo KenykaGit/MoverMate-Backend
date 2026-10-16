@@ -5,21 +5,18 @@ from datetime import UTC, datetime, timedelta
 from app.domain.common.ids import UserId, new_id
 from app.domain.tokens.entity import RefreshToken, TokenFamilyId, new_token_family
 from app.domain.users.entity import User
-from app.domain.users.value_objects import Email, PasswordHash, Username
+from app.domain.users.value_objects import PasswordHash, Username
 
 PASSWORD_HASH = "$argon2id$v=19$m=65536,t=3,p=4$c2FsdHNhbHQ$aGFzaGhhc2hoYXNo"
 
 
 def make_user(
     *,
-    email: str = "john@example.com",
     username: str = "john_doe",
     password_hash: str = PASSWORD_HASH,
     is_active: bool = True,
 ) -> User:
-    user = User.register(
-        email=Email(email), username=Username(username), password_hash=PasswordHash(password_hash)
-    )
+    user = User.register(username=Username(username), password_hash=PasswordHash(password_hash))
     if not is_active:
         user.soft_delete()
     return user
@@ -27,7 +24,7 @@ def make_user(
 
 def user_state(user: User) -> tuple[object, ...]:
     """All attributes of a user (User equality compares ids only)."""
-    return (user.id, user.email, user.username, user.password_hash, user.is_active)
+    return (user.id, user.username, user.password_hash, user.is_active)
 
 
 def make_refresh_token(

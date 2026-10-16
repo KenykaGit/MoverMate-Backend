@@ -16,17 +16,15 @@ from app.application.auth.logout import Logout
 from app.application.auth.refresh_tokens import RefreshTokens
 from app.application.common.uow import AbstractUnitOfWork
 from app.application.exceptions import (
-    EmailAlreadyTakenError,
     InvalidCredentialsError,
     InvalidRefreshTokenError,
+    UsernameAlreadyTakenError,
     UserNotFoundError,
 )
 from app.application.interfaces.user_repository import AbstractUserRepository
-from app.application.users.change_email import ChangeEmail
 from app.application.users.change_password import ChangePassword
 from app.application.users.change_username import ChangeUsername
 from app.application.users.dto import (
-    ChangeEmailDTO,
     ChangePasswordDTO,
     ChangeUsernameDTO,
     RegisterUserDTO,
@@ -96,34 +94,33 @@ class TestTransactions:
         await run(
             container,
             RegisterUser,
-            RegisterUserDTO(email="a@example.com", username="first", password=PASSWORD),
+            RegisterUserDTO(username="first", password=PASSWORD),
         )
 
-        with pytest.raises(EmailAlreadyTakenError):
+        with pytest.raises(UsernameAlreadyTakenError):
             await run(
                 container,
                 RegisterUser,
-                RegisterUserDTO(email="A@Example.com", username="second", password=PASSWORD),
+                RegisterUserDTO(username="First", password=PASSWORD),
             )
 
         async with session_maker() as session:
             users = SqlAlchemyUserRepository(session)
-            assert await users.get_by_email(make_user(email="a@example.com").email) is not None
-            assert await users.get_by_username(make_user(username="second").username) is None
+            assert await users.get_by_username(make_user(username="first").username) is not None
 
-    async def test_concurrent_registrations_with_one_email(self, container: AsyncContainer) -> None:
+    async def test_concurrent_registrations_with_one_username(
+        self, container: AsyncContainer
+    ) -> None:
         """Exactly one wins; the others get an application error, not a database one."""
 
-        async def register(username: str) -> UserDTO:
-            data = RegisterUserDTO(email="john@example.com", username=username, password=PASSWORD)
+        async def register() -> UserDTO:
+            data = RegisterUserDTO(username="john", password=PASSWORD)
             return await run(container, RegisterUser, data)
 
-        results = await asyncio.gather(
-            *(register(f"user_{number}") for number in range(5)), return_exceptions=True
-        )
+        results = await asyncio.gather(*(register() for _ in range(5)), return_exceptions=True)
 
         assert sum(isinstance(result, UserDTO) for result in results) == 1
-        assert sum(isinstance(result, EmailAlreadyTakenError) for result in results) == 4
+        assert sum(isinstance(result, UsernameAlreadyTakenError) for result in results) == 4
 
 
 async def test_user_lifecycle_through_the_real_stack(container: AsyncContainer) -> None:
@@ -131,7 +128,7 @@ async def test_user_lifecycle_through_the_real_stack(container: AsyncContainer) 
     new_password = "a new correct horse battery"
 
     async def login(name: str, password: str) -> TokenPairDTO:
-        return await run(container, Login, LoginDTO(login=name, password=password))
+        return await run(container, Login, LoginDTO(username=name, password=password))
 
     async def refresh(token: str) -> TokenPairDTO:
         return await run(container, RefreshTokens, token)
@@ -139,13 +136,13 @@ async def test_user_lifecycle_through_the_real_stack(container: AsyncContainer) 
     user = await run(
         container,
         RegisterUser,
-        RegisterUserDTO(email="Иван@Пример.РФ", username="Ivan", password=PASSWORD),
+        RegisterUserDTO(username="Ivan", password=PASSWORD),
     )
-    assert (user.email, user.username) == ("иван@пример.рф", "ivan")
+    assert user.username == "ivan"
 
     # Two devices; a replayed token ends its own session only.
     laptop = await login("ivan", PASSWORD)
-    phone = await login("иван@xn--e1afmkfd.xn--p1ai", PASSWORD)  # punycode: the same address
+    phone = await login("IVAN", PASSWORD)  # usernames are case-insensitive
     rotated = await refresh(laptop.refresh_token)
     with pytest.raises(InvalidRefreshTokenError):
         await refresh(laptop.refresh_token)
@@ -168,17 +165,12 @@ async def test_user_lifecycle_through_the_real_stack(container: AsyncContainer) 
     with pytest.raises(InvalidCredentialsError):
         await login("ivan", PASSWORD)
 
-    await run(
-        container,
-        ChangeEmail,
-        ChangeEmailDTO(user_id=user.id, new_email="ivan@example.com", password=new_password),
-    )
     await run(container, ChangeUsername, ChangeUsernameDTO(user_id=user.id, new_username="ivan_2"))
     changed = await run(container, GetUser, user.id)
-    assert (changed.email, changed.username) == ("ivan@example.com", "ivan_2")
-    await login("ivan@example.com", new_password)
+    assert changed.username == "ivan_2"
+    await login("ivan_2", new_password)
 
-    # Soft delete frees the email; a restore conflicts while someone else holds it.
+    # Soft delete frees the username; a restore conflicts while someone else holds it.
     await run(container, SoftDeleteUser, user.id)
     with pytest.raises(UserNotFoundError):
         await run(container, GetUser, user.id)
@@ -187,9 +179,9 @@ async def test_user_lifecycle_through_the_real_stack(container: AsyncContainer) 
     newcomer = await run(
         container,
         RegisterUser,
-        RegisterUserDTO(email="ivan@example.com", username="newcomer", password=PASSWORD),
+        RegisterUserDTO(username="ivan_2", password=PASSWORD),
     )
-    with pytest.raises(EmailAlreadyTakenError):
+    with pytest.raises(UsernameAlreadyTakenError):
         await run(container, RestoreUser, user.id)
 
     await run(container, SoftDeleteUser, newcomer.id)

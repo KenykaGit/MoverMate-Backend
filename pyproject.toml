@@ -22,8 +22,6 @@ dependencies = [
 
 [dependency-groups]
 dev = [
-    # Reference implementation the domain Email is checked against (tests only).
-    "email-validator==2.3.0",
     "httpx==0.28.1",
     "import-linter==2.15",
     "mypy==2.4.0",

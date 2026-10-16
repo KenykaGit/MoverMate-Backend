@@ -38,7 +38,7 @@ client ──HTTP──▶ nginx :8000 ──▶ api (uvicorn, FastAPI) ──�
 
 | Слой | Что здесь | Чего здесь нет |
 |---|---|---|
-| `domain/` | `User`, `RefreshToken` (с `TokenFamilyId`); Value Objects `Email`, `Username`, `RawPassword`, `PasswordHash`; `DomainError` | любые сторонние пакеты, ввод-вывод, время «сейчас» |
+| `domain/` | `User`, `RefreshToken` (с `TokenFamilyId`); Value Objects `Username`, `RawPassword`, `PasswordHash`; `DomainError` | любые сторонние пакеты, ввод-вывод, время «сейчас» |
 | `application/` | use cases (`RegisterUser`, `Login`, `RefreshTokens`…), сервисы (`CredentialsVerifier`, `TokenPairIssuer`, `IdempotentExecutor`), порты в `interfaces/`, DTO, `exceptions.py` | FastAPI, SQLAlchemy, Redis, pydantic, structlog; логирование только через stdlib `logging` |
 | `infrastructure/` | ORM-модели, мапперы, репозитории, UoW, адаптеры Redis, argon2/JWT, метрики, настройка логов | бизнес-правила, HTTP |
 | `presentation/` | роуты (`DishkaRoute`), pydantic-схемы (только форма запроса), контракт ошибок, `RequestContextMiddleware`, rate limit, `CurrentUser` | SQL, Redis, хэширование (только через порты) |
@@ -47,9 +47,7 @@ client ──HTTP──▶ nginx :8000 ──▶ api (uvicorn, FastAPI) ──�
 ### Домен
 
 - Value Objects — `@dataclass(frozen=True, slots=True)`. Нормализация (`strip`, `lower`) и
-  валидация происходят в `__post_init__`. Синтаксис email
-  ([email_address.py](../src/app/domain/users/email_address.py)) реализован на stdlib по
-  правилам email-validator: домен не зависит от библиотек. Нарушения приводят к подклассу `DomainError`.
+  валидация происходят в `__post_init__`. Нарушения приводят к подклассу `DomainError`.
   Pydantic в слое представления проверяет только структуру JSON.
 - Сущности — `@dataclass(slots=True, kw_only=True, eq=False)`, наследники `Entity`. Сравнение
   и хэш вычисляются по типу и `id`. Идентификаторы — UUIDv7 (`domain/common/ids.py`):
@@ -75,7 +73,7 @@ client ──HTTP──▶ nginx :8000 ──▶ api (uvicorn, FastAPI) ──�
 
 ## Поток запроса
 
-`PUT /api/v1/users/me/email`:
+`PUT /api/v1/users/me/username`:
 
 1. **nginx** генерирует или сохраняет `X-Request-ID`, перезаписывает `X-Forwarded-For`
    и проксирует запрос в `api:8000`.
@@ -88,9 +86,8 @@ client ──HTTP──▶ nginx :8000 ──▶ api (uvicorn, FastAPI) ──�
 4. **`api_rate_limit`** считает запрос в Redis. Если Redis недоступен, запрос пропускается.
 5. **`CurrentUser`** → `AuthenticateUser`: JWT → `user_id` → чтение пользователя из БД.
    Удалённый пользователь сразу получает 401.
-6. **`ChangeEmail`**: `Email(...)` (валидация и нормализация) → проверка пароля →
-   `user.change_email` → `repo.update` (flush в `SAVEPOINT`, конфликт → `EmailAlreadyTakenError`)
-   → `uow.commit()`.
+6. **`ChangeUsername`**: `Username(...)` (валидация и нормализация) → `user.change_username` →
+   `repo.update` (flush в `SAVEPOINT`, конфликт → `UsernameAlreadyTakenError`) → `uow.commit()`.
 7. Небезопасный эндпоинт, которому нужны повторы без дублей, оборачивает use case в
    `IdempotentExecutor.run(...)` (`run_idempotent` в presentation). Ключ ставится в `pending`
    (`SET NX`), после успеха сохраняется JSON ответа (`completed`, 24 ч), при исключении ключ
@@ -117,32 +114,32 @@ client ──HTTP──▶ nginx :8000 ──▶ api (uvicorn, FastAPI) ──�
 
 ## Модель данных
 
-Схема создаётся миграцией [0001](../migrations/versions/0001_initial.py).
+Схема создаётся миграцией [0001](../migrations/versions/0001_initial.py); [0002](../migrations/versions/0002_drop_user_email.py) убирает `users.email`.
 
 | Таблица | Ключевые ограничения |
 |---|---|
-| `users` | частичные уникальные индексы `uq_users_email_active`, `uq_users_username_active` `WHERE is_active`; CHECK `email = lower(email)`, `username = lower(username)` |
+| `users` | частичный уникальный индекс `uq_users_username_active` `WHERE is_active`; CHECK `username = lower(username)` |
 | `refresh_tokens` | хранится только `token_hash` (SHA-256, CHECK длины 64, UNIQUE); `family_id` (сессия, индекс); `revoked_at`; FK на `users` с `ON DELETE CASCADE` |
 
 ### Состояния и переходы
 
 | Объект | Состояния | Переходы | Где защищено |
 |---|---|---|---|
-| Пользователь | `active`, `deleted` (`is_active`) | регистрация → `active`; `SoftDeleteUser`: `active → deleted` (идемпотентно, все сессии отзываются); `RestoreUser`: `deleted → active` (409, если email или username уже заняты) | методы `User`; частичные уникальные индексы `WHERE is_active`; CHECK нижнего регистра email и username |
+| Пользователь | `active`, `deleted` (`is_active`) | регистрация → `active`; `SoftDeleteUser`: `active → deleted` (идемпотентно, все сессии отзываются); `RestoreUser`: `deleted → active` (409, если username уже занят) | методы `User`; частичные уникальные индексы `WHERE is_active`; CHECK нижнего регистра username |
 | Refresh-токен | `active`, `revoked`, `expired` | вход → `active` в новой семье; ротация: предъявленный `active → revoked` и новый `active` в той же семье; повтор или logout: вся семья → `revoked`; смена пароля или удаление: все токены пользователя → `revoked`; `expired` наступает по времени | `RefreshToken.revoke` (первое время отзыва сохраняется); атомарный `UPDATE … WHERE revoked_at IS NULL RETURNING id`; UNIQUE и CHECK длины `token_hash` |
 
 Переходы выполняются только методами сущностей и атомарными операциями репозиториев.
 Состояние, которое нельзя получить законным путём (два активных пользователя с одним
-email, хэш вместо сырого токена неверной длины), отклоняет сама БД. Стейт-машина нового
+username, хэш вместо сырого токена неверной длины), отклоняет сама БД. Стейт-машина нового
 бизнес-модуля оформляется так же: матрица в домене, её копия в БД (CHECK или триггер) и
 тест их согласованности ([ADR 0005](adr/0005-migrations.md)).
 
 ### Мягкое удаление пользователей
 
 `SoftDeleteUser` ставит `is_active = false` и отзывает все сессии. Частичные индексы сразу
-освобождают email и username для новой регистрации ([ADR 0008](adr/0008-soft-delete-and-savepoints.md)).
+освобождают username для новой регистрации ([ADR 0008](adr/0008-soft-delete-and-savepoints.md)).
 Репозиторий делает `flush()` внутри `SAVEPOINT`. Нарушение уникальности превращается в
-`EmailAlreadyTakenError` или `UsernameAlreadyTakenError` по имени индекса, а транзакция
+`UsernameAlreadyTakenError` по имени индекса, а транзакция
 запроса остаётся рабочей.
 
 ### Сессии (refresh-токены)
@@ -220,6 +217,11 @@ import-linter выразить не может:
 - Перехэширование происходит только при входе: пароли пользователей, которые давно не
   входили, остаются со старыми параметрами argon2.
 - Маппер заново проверяет значения из БД через Value Objects. Если правила ужесточить
-  (например, синтаксис email), уже сохранённая строка, которая им не отвечает, перестанет
+  (например, формат username), уже сохранённая строка, которая им не отвечает, перестанет
   читаться. Ужесточение правил сопровождайте миграцией или скриптом, который находит и
   исправляет такие данные.
+- Миграция [0002](../migrations/versions/0002_drop_user_email.py) удаляет колонку `users.email`
+  за один релиз, без expand/contract: код предыдущего релиза пишет в неё и на новой схеме не
+  работает. Допустимо, пока шаблон не выкатывался на прод; иначе делите на два релиза (сначала
+  `email` nullable, затем удаление). `downgrade()` возвращает колонку с заглушками
+  `<id>@removed.invalid`: настоящие адреса не восстанавливаются.
