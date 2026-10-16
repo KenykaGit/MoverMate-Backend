@@ -10,9 +10,13 @@ commit ─▶ MR ─▶ check (параллельно) ─▶ build ─▶ merge
 1. **Локально:** `make check` выполняет то же, что стадия `check` в CI. pre-commit
    (`make install`) запускает ruff, mypy, import-linter и unit-тесты на каждый коммит.
 2. **MR:** параллельные проверки, затем сборка образа без публикации.
-3. **Основная ветка или тег:** образ публикуется как `$CI_REGISTRY_IMAGE:<short-sha>`
-   (и `:<tag>` для тегов). Версия зашивается в образ (`APP_VERSION`) и видна в `/health/ready`.
-4. **Deploy** (кнопка в пайплайне основной ветки) выполняет на сервере:
+3. **Основная ветка:** Kaniko публикует образ `${DOCKER_ARTIFACTORY_REGISTRY}/<namespace>/<project>:<short-sha>`
+   (шаблоны [pipelines/pipelines](https://gitlab.t-education.com/pipelines/pipelines)). Версия
+   зашивается в образ (`APP_VERSION`) и видна в `/health/ready`. Повторная сборка того же
+   коммита безопасна: существующий тег считается успехом.
+4. **Deploy** (кнопка в пайплайне основной ветки; вход на сервер через Teleport, `docker login`
+   на VM настраивает `dp auth configure-docker`) копирует `docker-compose.prod.yml` и
+   `docker/nginx/nginx.conf` в `$DEPLOY_DIR` и выполняет на сервере:
    1. `docker compose pull api`;
    2. `docker compose run --rm migrate` — `alembic upgrade head` тем же образом. Если миграция
       упала, job красный, а старый api продолжает обслуживать трафик;
@@ -79,14 +83,31 @@ Postgres создаст рядом **пустой** кластер. Поэтом
 ## Первичная подготовка сервера (один раз)
 
 1. Установить Docker и плагин compose, создать `DEPLOY_DIR` (например, `/opt/service`).
-2. Положить в `$DEPLOY_DIR/.env`: `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`,
-   `AUTH__SECRET_KEY` (`python -c "import secrets; print(secrets.token_urlsafe(48))"`),
-   `CORS_ORIGINS`. Права `600`, в репозиторий не коммитится. С `ENV=prod` приложение не
-   стартует, если секрет оставлен по умолчанию или `LOG_JSON=false`.
-3. В GitLab (Settings → CI/CD → Variables, protected): `SSH_PRIVATE_KEY` (File), `SSH_HOST`,
-   `SSH_USER`, `SSH_KNOWN_HOSTS` (вывод `ssh-keyscan <host>`), `DEPLOY_DIR`; deploy token
-   `gitlab-deploy-token` с правом `read_registry`.
-4. Если перед nginx стоит балансировщик с TLS, раскомментируйте `set_real_ip_from` в
+2. Секреты приложения хранятся в переменных CI (п. 4). Deploy сам записывает
+   `$DEPLOY_DIR/.env` (права `600`, пересоздаётся при каждом запуске), чтобы ручные команды
+   `docker compose` на сервере тоже работали. С `ENV=prod` приложение не стартует, если секрет
+   оставлен по умолчанию или `LOG_JSON=false`.
+3. На VM: пользователь `DEPLOY_SSH_USER` с беспарольным `sudo`, владелец `$DEPLOY_DIR`, доступ
+   к Teleport для сервисного аккаунта Spirit, исходящий доступ к `spirit.t-education.com`
+   (job ставит `dp`, если его нет) и `curl` для smoke-теста.
+4. Переменные CI (Spirit → Repository → CI Variables или Settings → CI/CD → Variables):
+
+   | Переменная | Тип | Назначение |
+   |---|---|---|
+   | `SPIRIT_DOCKER_SA_KEY` | **File**, не protected | JSON-ключ сервисного аккаунта Spirit: push в registry, Teleport, `docker login` на VM. Не protected: нужен и в MR (сборка без push) |
+   | `DOCKER_ARTIFACTORY_REGISTRY` | Variable | адрес registry Spirit (обычно уже задан на уровне группы) |
+   | `DEPLOY_SSH_USER` | Variable | пользователь на VM |
+   | `DEPLOY_VM` | Variable | имя VM в Teleport |
+   | `DEPLOY_DIR` | Variable | каталог стека на VM, например `/opt/service` |
+   | `POSTGRES_USER`, `POSTGRES_DB` | Variable | пользователь и база Postgres в проде |
+   | `POSTGRES_PASSWORD` | Variable, masked + protected | пароль Postgres |
+   | `AUTH__SECRET_KEY` | Variable, masked + protected | ключ подписи токенов, >= 32 символов: `python -c "import secrets; print(secrets.token_urlsafe(48))"` |
+   | `CORS_ORIGINS` | Variable | JSON-список источников, например `["https://app.example.com"]`; по умолчанию `[]` |
+
+   Значения без одинарных кавычек. Смена `POSTGRES_PASSWORD` не меняет пароль в уже созданной
+   БД (Postgres читает его только при инициализации тома): нужен ещё `ALTER USER`. Смена
+   `AUTH__SECRET_KEY` разлогинит всех пользователей.
+5. Если перед nginx стоит балансировщик с TLS, раскомментируйте `set_real_ip_from` в
    [nginx.conf](../docker/nginx/nginx.conf), иначе rate limit будет считать все запросы с IP
    балансировщика.
 
