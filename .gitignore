@@ -1,0 +1,15 @@
+__pycache__/
+*.py[cod]
+.venv/
+.uv-cache/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.import_linter_cache/
+.coverage
+coverage.xml
+report.xml
+htmlcov/
+.env
+.idea/
+.vscode/

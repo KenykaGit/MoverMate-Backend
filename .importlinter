@@ -1,0 +1,69 @@
+[importlinter]
+root_package = app
+include_external_packages = True
+
+[importlinter:contract:layers]
+name = Layers point inwards: composition root -> presentation -> infrastructure -> application -> domain
+type = layers
+layers =
+    app.main
+    app.ioc
+    app.config
+    app.presentation
+    app.infrastructure
+    app.application
+    app.domain
+
+[importlinter:contract:pure_core]
+name = Domain and application depend on the standard library only
+type = forbidden
+source_modules =
+    app.domain
+    app.application
+forbidden_modules =
+    fastapi
+    starlette
+    pydantic
+    pydantic_settings
+    sqlalchemy
+    alembic
+    asyncpg
+    redis
+    argon2
+    jwt
+    structlog
+    prometheus_client
+    dishka
+    uvicorn
+
+[importlinter:contract:domain_modules]
+name = Domain modules do not know each other (shared kernel: app.domain.common)
+type = independence
+modules =
+    app.domain.users
+    app.domain.tokens
+
+[importlinter:contract:application_modules]
+name = Application features are independent (auth may use users)
+type = independence
+modules =
+    app.application.users
+    app.application.auth
+    app.application.health
+ignore_imports =
+    app.application.auth.** -> app.application.users.**
+
+[importlinter:contract:presentation_adapters]
+name = Presentation reaches storage and security only through application ports
+type = forbidden
+source_modules =
+    app.presentation
+forbidden_modules =
+    app.infrastructure.db
+    app.infrastructure.redis
+    app.infrastructure.security
+    sqlalchemy
+    redis
+    asyncpg
+    argon2
+    jwt

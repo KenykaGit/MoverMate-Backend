@@ -1,0 +1,36 @@
+# `make install` sets the hooks up. They run the project's own tool versions from uv.lock.
+repos:
+  - repo: local
+    hooks:
+      - id: ruff-check
+        name: ruff check
+        entry: uv run ruff check --fix
+        language: system
+        types: [python]
+
+      - id: ruff-format
+        name: ruff format
+        entry: uv run ruff format
+        language: system
+        types: [python]
+
+      - id: mypy
+        name: mypy (strict)
+        entry: uv run mypy
+        language: system
+        types: [python]
+        pass_filenames: false
+
+      - id: import-linter
+        name: import-linter
+        entry: uv run lint-imports
+        language: system
+        types: [python]
+        pass_filenames: false
+
+      - id: unit-tests
+        name: unit tests (no Docker)
+        entry: uv run pytest -m "not integration" -q
+        language: system
+        types: [python]
+        pass_filenames: false

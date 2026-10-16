@@ -1,0 +1,87 @@
+# Production stack, used by the `deploy` CI job on the target server.
+# Required in $DEPLOY_DIR/.env on the server (never committed):
+#   POSTGRES_USER, POSTGRES_PASSWORD, POSTGRES_DB, AUTH__SECRET_KEY (>= 32 random chars),
+#   CORS_ORIGINS; optionally RATE_LIMIT__API_PER_MINUTE, RATE_LIMIT__AUTH_PER_MINUTE.
+# Provided by the deploy job: IMAGE (registry path), IMAGE_TAG (git short sha).
+# The deploy job also copies docker/nginx/ next to this file.
+x-app: &app
+  image: ${IMAGE:?IMAGE is required}:${IMAGE_TAG:?IMAGE_TAG is required}
+  environment:
+    ENV: prod
+    APP_VERSION: ${IMAGE_TAG}
+    LOG_JSON: "true"
+    CORS_ORIGINS: ${CORS_ORIGINS:-[]}
+    DATABASE__URL: postgresql+asyncpg://${POSTGRES_USER:?}:${POSTGRES_PASSWORD:?}@db:5432/${POSTGRES_DB:?}
+    REDIS__URL: redis://redis:6379/0
+    AUTH__SECRET_KEY: ${AUTH__SECRET_KEY:?AUTH__SECRET_KEY is required}
+    RATE_LIMIT__API_PER_MINUTE: ${RATE_LIMIT__API_PER_MINUTE:-120}
+    RATE_LIMIT__AUTH_PER_MINUTE: ${RATE_LIMIT__AUTH_PER_MINUTE:-10}
+    # Safe only because api publishes no ports: nginx is the single way in.
+    FORWARDED_ALLOW_IPS: "*"
+
+services:
+  db:
+    image: postgres:18.6-alpine3.24
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?}
+      POSTGRES_DB: ${POSTGRES_DB:?}
+    volumes:
+      # PostgreSQL 18+ keeps a versioned PGDATA under this directory (pg_upgrade-friendly).
+      - pg-data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+    # No published ports: reachable only from the compose network.
+
+  # Valkey: the BSD-licensed fork of Redis, same protocol and client (ADR 0003).
+  redis:
+    image: valkey/valkey:9.1.2-alpine3.24
+    # Only auxiliary data lives here: evicting keys under memory pressure is fine.
+    command: ["valkey-server", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru"]
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  # One-shot: the deploy job runs `docker compose run --rm migrate` before restarting api.
+  migrate:
+    <<: *app
+    command: ["alembic", "upgrade", "head"]
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+    profiles: ["migrate"]  # never started by a plain `up`
+
+  api:
+    <<: *app
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  nginx:
+    image: nginx:1.30.5-alpine3.24
+    ports: ["80:80"]
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1/health/live"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+volumes:
+  pg-data:

@@ -1,0 +1,147 @@
+[project]
+name = "reference-backend"
+version = "0.1.0"
+description = "Reference async Python backend: Clean Architecture + DDD core with production-grade operations"
+readme = "README.md"
+requires-python = "==3.14.*"
+dependencies = [
+    "alembic==1.20.0",
+    "argon2-cffi==25.1.0",
+    "asyncpg==0.32.0",
+    "dishka==1.10.1",
+    "fastapi==0.143.0",
+    "prometheus-client==0.26.0",
+    "pydantic==2.14.1",
+    "pydantic-settings==2.15.0",
+    "pyjwt==2.15.1",
+    "redis==8.1.0",
+    "sqlalchemy[asyncio]==2.1.4",
+    "structlog==26.1.0",
+    "uvicorn[standard]==0.54.0",
+]
+
+[dependency-groups]
+dev = [
+    # Reference implementation the domain Email is checked against (tests only).
+    "email-validator==2.3.0",
+    "httpx==0.28.1",
+    "import-linter==2.15",
+    "mypy==2.4.0",
+    "pre-commit==4.6.2",
+    "pytest==9.1.1",
+    "pytest-asyncio==1.4.0",
+    "pytest-cov==7.1.0",
+    "ruff==0.17.0",
+    "testcontainers[postgres,redis]==4.15.0",
+]
+
+[build-system]
+requires = ["uv_build==0.13.0"]
+build-backend = "uv_build"
+
+[tool.uv]
+# The same uv as in the Dockerfile and CI images.
+required-version = "==0.13.0"
+
+[tool.uv.build-backend]
+module-name = "app"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = ["-ra", "--strict-markers", "--import-mode=importlib"]
+pythonpath = ["."]
+asyncio_mode = "auto"
+# Database and Redis fixtures are session-scoped, so tests share their event loop.
+asyncio_default_fixture_loop_scope = "session"
+asyncio_default_test_loop_scope = "session"
+markers = [
+    "integration: needs Docker (Postgres and Redis in testcontainers) or TEST_* URLs",
+]
+filterwarnings = ["error::pytest.PytestUnraisableExceptionWarning"]
+
+[tool.coverage.run]
+source = ["src/app"]
+branch = true
+# SQLAlchemy's asyncio layer switches greenlets: without this, lines resumed
+# after an `await` on the database are reported as missed.
+concurrency = ["thread", "greenlet"]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
+exclude_also = [
+    "if TYPE_CHECKING:",
+    "@abstractmethod",
+    "raise NotImplementedError",
+]
+
+[tool.ruff]
+target-version = "py314"
+line-length = 100
+src = ["src", "."]
+
+[tool.ruff.lint]
+select = [
+    "F",     # pyflakes
+    "E",     # pycodestyle errors
+    "W",     # pycodestyle warnings
+    "I",     # isort
+    "N",     # pep8-naming
+    "UP",    # pyupgrade
+    "B",     # flake8-bugbear
+    "A",     # flake8-builtins
+    "C4",    # flake8-comprehensions
+    "SIM",   # flake8-simplify
+    "RET",   # flake8-return
+    "PIE",   # flake8-pie
+    "PT",    # flake8-pytest-style
+    "ARG",   # flake8-unused-arguments
+    "S",     # flake8-bandit
+    "BLE",   # flake8-blind-except
+    "ASYNC", # flake8-async
+    "DTZ",   # flake8-datetimez: naive datetimes are bugs here
+    "PL",    # pylint
+    "RUF",   # ruff-specific rules
+]
+ignore = [
+    "PLR0913", # use cases take their ports as constructor arguments
+    "PLR0917",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = [
+    "S101",    # assert is how pytest works
+    "S105",    # fake passwords and hashes in test data
+    "S106",
+    "PLR2004", # magic values are fine in assertions
+    "ARG001",  # fixtures requested for their side effects
+]
+"migrations/**" = ["ALL"]
+
+[tool.ruff.lint.flake8-bugbear]
+# FastAPI's Depends/Security/Header/Query defaults are evaluated once by design.
+extend-immutable-calls = [
+    "fastapi.Depends",
+    "fastapi.Security",
+    "fastapi.Header",
+    "fastapi.Query",
+]
+
+[tool.mypy]
+python_version = "3.14"
+files = ["src", "tests", "migrations"]
+mypy_path = ["src"]
+explicit_package_bases = true
+plugins = ["pydantic.mypy"]
+strict = true
+warn_unreachable = true
+enable_error_code = [
+    "ignore-without-code",
+    "redundant-expr",
+    "truthy-bool",
+    "possibly-undefined",
+]
+
+[[tool.mypy.overrides]]
+module = ["testcontainers.*"]
+ignore_missing_imports = true

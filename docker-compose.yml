@@ -1,0 +1,87 @@
+# Local development stack. Production uses docker-compose.prod.yml.
+# Entry point: http://localhost:8000 (nginx). The api publishes no ports: only nginx
+# can reach it, which is why uvicorn may trust X-Forwarded-For from any peer.
+x-app-env: &app-env
+  ENV: ${ENV:-local}
+  APP_VERSION: dev
+  LOG_LEVEL: ${LOG_LEVEL:-INFO}
+  LOG_JSON: ${LOG_JSON:-false}
+  CORS_ORIGINS: ${CORS_ORIGINS:-[]}
+  DATABASE__URL: postgresql+asyncpg://${POSTGRES_USER:-app}:${POSTGRES_PASSWORD:-app}@db:5432/${POSTGRES_DB:-app}
+  REDIS__URL: redis://redis:6379/0
+  AUTH__SECRET_KEY: ${AUTH__SECRET_KEY:-dev-only-insecure-secret-key-change-me!!}
+  RATE_LIMIT__API_PER_MINUTE: ${RATE_LIMIT__API_PER_MINUTE:-120}
+  RATE_LIMIT__AUTH_PER_MINUTE: ${RATE_LIMIT__AUTH_PER_MINUTE:-10}
+  FORWARDED_ALLOW_IPS: "*"
+
+services:
+  db:
+    image: postgres:18.6-alpine3.24
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-app}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-app}
+      POSTGRES_DB: ${POSTGRES_DB:-app}
+    ports: ["${POSTGRES_HOST_PORT:-5432}:5432"]  # for the app/tests on the host (make infra)
+    volumes:
+      # PostgreSQL 18+ keeps a versioned PGDATA under this directory (pg_upgrade-friendly).
+      - pg-data:/var/lib/postgresql
+      # Runs on an empty volume only; see `make db-reset`.
+      - ./docker/initdb:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      # -h 127.0.0.1: during initdb the temporary server listens on the socket only,
+      # so a TCP check does not report "ready" before the real server is up.
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  # Valkey: the BSD-licensed fork of Redis, same protocol and client (ADR 0003).
+  redis:
+    image: valkey/valkey:9.1.2-alpine3.24
+    ports: ["${REDIS_HOST_PORT:-6379}:6379"]
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  migrate:
+    build:
+      context: .
+      args:
+        APP_VERSION: dev
+    command: ["alembic", "upgrade", "head"]
+    environment: *app-env
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+
+  api:
+    build:
+      context: .
+      args:
+        APP_VERSION: dev
+    environment: *app-env
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+
+  nginx:
+    image: nginx:1.30.5-alpine3.24
+    ports: ["8000:80"]
+    volumes:
+      - ./docker/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1/health/live"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  pg-data:
