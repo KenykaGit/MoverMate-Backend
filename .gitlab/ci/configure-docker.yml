@@ -1,15 +1,15 @@
 # Vendored from pipelines/pipelines (jobs/configure-docker.yaml): `docker login` to the
 # Spirit registry on the VM (dp auth service-acc + dp auth configure-docker) over Teleport.
 # Requires .teleport_auth (teleport.yml), DEPLOY_SSH_USER, DEPLOY_VM, SPIRIT_DOCKER_SA_KEY.
-# Rules are set by the consuming job.
+# Rules are set by the consuming job. Deviation from upstream: DP_CLI_VERSION defaults to the
+# dp version of the CI image instead of a pinned 14.1.0, which is no longer downloadable.
 .configure_docker:
   stage: deploy
   image: registry.spirit.t-education.com/cicd-images/tsh-18:latest
   extends: .teleport_auth
-  variables:
-    DP_CLI_VERSION: "14.1.0"
   script:
     - |
+      DP_CLI_VERSION="${DP_CLI_VERSION:-$(dp -v | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n1)}"
       KEY_B64=$(base64 -w0 "$SPIRIT_DOCKER_SA_KEY")
       tsh ssh "${DEPLOY_SSH_USER}@${DEPLOY_VM}" "
         set -e
