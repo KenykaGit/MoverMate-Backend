@@ -140,7 +140,7 @@ deploy:
   script:
     - !reference [.configure_docker, script]
     - |
-      tsh ssh "${DEPLOY_SSH_USER}@${DEPLOY_VM}" "mkdir -p '${DEPLOY_DIR}/nginx'"
+      tsh ssh "${DEPLOY_SSH_USER}@${DEPLOY_VM}" "sudo install -d -o '${DEPLOY_SSH_USER}' '${DEPLOY_DIR}' '${DEPLOY_DIR}/nginx'"
       tsh scp docker-compose.prod.yml "${DEPLOY_SSH_USER}@${DEPLOY_VM}:${DEPLOY_DIR}/docker-compose.yml"
       tsh scp docker/nginx/nginx.conf "${DEPLOY_SSH_USER}@${DEPLOY_VM}:${DEPLOY_DIR}/nginx/nginx.conf"
     # App secrets live in CI variables; the VM gets a 600 .env (rewritten on every deploy) so

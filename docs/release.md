@@ -87,7 +87,8 @@ Postgres создаст рядом **пустой** кластер. Поэтом
    `$DEPLOY_DIR/.env` (права `600`, пересоздаётся при каждом запуске), чтобы ручные команды
    `docker compose` на сервере тоже работали. С `ENV=prod` приложение не стартует, если секрет
    оставлен по умолчанию или `LOG_JSON=false`.
-3. На VM: пользователь `DEPLOY_SSH_USER` с беспарольным `sudo`, владелец `$DEPLOY_DIR`, доступ
+3. На VM: пользователь `DEPLOY_SSH_USER` с беспарольным `sudo` (deploy сам создаёт `$DEPLOY_DIR` и
+   отдаёт его этому пользователю), доступ
    к Teleport для сервисного аккаунта Spirit, исходящий доступ к `spirit.t-education.com`
    (job ставит `dp`, если его нет) и `curl` для smoke-теста.
 4. Переменные CI (Spirit → Repository → CI Variables или Settings → CI/CD → Variables):
@@ -96,7 +97,7 @@ Postgres создаст рядом **пустой** кластер. Поэтом
    |---|---|---|
    | `SPIRIT_DOCKER_SA_KEY` | **File**, не protected | JSON-ключ сервисного аккаунта Spirit: push в registry, Teleport, `docker login` на VM. Не protected: нужен и в MR (сборка без push) |
    | `DOCKER_ARTIFACTORY_REGISTRY` | Variable | адрес registry Spirit (обычно уже задан на уровне группы) |
-   | `DEPLOY_SSH_USER` | Variable | пользователь на VM |
+   | `DEPLOY_SSH_USER` | Variable | логин на VM, разрешённый ролью Teleport сервисного аккаунта (`Logins` в выводе `tsh login`, например `sa-<group>-spirit-docker-ci`); `root` запрещён |
    | `DEPLOY_VM` | Variable | имя VM в Teleport |
    | `DEPLOY_DIR` | Variable | каталог стека на VM, например `/opt/service` |
    | `POSTGRES_USER`, `POSTGRES_DB` | Variable | пользователь и база Postgres в проде |
