@@ -102,6 +102,8 @@ nginx:
   cache: []
   before_script: []
   script:
+    # The frontend upstream is resolved at config load; compose provides this name via extra_hosts.
+    - echo "127.0.0.1 host.docker.internal" >> /etc/hosts
     - nginx -t -c "$CI_PROJECT_DIR/docker/nginx/nginx.conf"
 
 .build:image:
