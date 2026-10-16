@@ -1,12 +1,6 @@
-# Vendored from pipelines/pipelines (jobs/rules.yaml): only the rules this project uses.
-.rules-merge-or-master:
-  rules:
-    - if: '$CI_COMMIT_REF_NAME == $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME'
-    - if: '$CI_COMMIT_REF_NAME == "master"'
-
 .rules-merge:
   rules:
-    - if: '$CI_COMMIT_REF_NAME == $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME'
+    - if: "$CI_COMMIT_REF_NAME == $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME"
 
 .rules-master:
   rules:

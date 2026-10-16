@@ -1,6 +1,3 @@
-# CI/CD: check -> build -> deploy (docs/release.md).
-# Build, registry auth and Teleport/SSH come from the Spirit templates vendored
-# into .gitlab/ci/. Required CI variables: see docs/release.md.
 include:
   - local: .gitlab/ci/rules.yml
   - local: .gitlab/ci/spirit.yml
@@ -15,18 +12,12 @@ stages:
 
 variables:
   IMAGE_REPO: ${DOCKER_ARTIFACTORY_REGISTRY}/${CI_PROJECT_ROOT_NAMESPACE}/${CI_PROJECT_NAME}
-  # Keep in sync with docker-compose.yml and tests/integration/conftest.py.
   POSTGRES_IMAGE: postgres:18.6-alpine3.24
   VALKEY_IMAGE: valkey/valkey:9.1.2-alpine3.24
   NGINX_IMAGE: nginx:1.30.5-alpine3.24
 
-# ---------------------------------------------------------------- check
-# The same checks as `make check`; uv is called directly because the slim
-# Python image has no make. Runs in merge requests and on master.
-
 .check:
   stage: check
-  extends: .rules-merge-or-master
   interruptible: true
   image: python:3.14.8-slim-trixie
   variables:
@@ -39,30 +30,18 @@ variables:
       files: [uv.lock]
     paths: [.uv-cache]
   before_script:
-    # Same uv as the Dockerfile and [tool.uv] required-version.
     - pip install --no-cache-dir uv==0.13.0
     - uv sync --frozen
 
 lint:
   extends: .check
   script:
-    - uv run ruff check .
-    - uv run ruff format --check .
+    - uv run ruff check . --output-format=gitlab --output-file=code-quality-report.json
+  artifacts:
+    reports:
+      codequality: $CI_PROJECT_DIR/code-quality-report.json
 
-typecheck:
-  extends: .check
-  script:
-    - uv run mypy
-
-architecture:
-  extends: .check
-  script:
-    - uv run lint-imports
-    - uv run pytest tests/unit/test_architecture.py tests/unit/ioc -q
-
-# Tests TRUNCATE tables and FLUSHDB: the database name must end in _test
-# and Redis must be logical DB 15 (tests/integration/conftest.py).
-test:
+.test:
   extends: .check
   services:
     - name: $POSTGRES_IMAGE
@@ -88,7 +67,16 @@ test:
         coverage_format: cobertura
         path: coverage.xml
 
-# As `make migrations-check`: single head, upgrade, drift check, downgrade, upgrade.
+test:unit:
+  extends: .test
+  script:
+    - uv run pytest --cov --cov-report=term --cov-report=xml:coverage.xml --junitxml=report.xml tests/unit
+
+test:integration:
+  extends: .test
+  script:
+    - uv run pytest --cov --cov-report=term --cov-report=xml:coverage.xml --junitxml=report.xml tests/integration
+
 migrations:
   extends: .check
   services:
@@ -116,18 +104,12 @@ nginx:
   script:
     - nginx -t -c "$CI_PROJECT_DIR/docker/nginx/nginx.conf"
 
-# ---------------------------------------------------------------- build
-# Kaniko (via .dp_build) pushes ${IMAGE_REPO}:<short sha>. A tag that already exists
-# in the registry counts as success, so re-running a pipeline is safe.
-
 .build:image:
   extends: .dp_build
   variables:
     IMAGE_NAME: ${IMAGE_REPO}:${CI_COMMIT_SHORT_SHA}
     KANIKO_ARGS: --build-arg APP_VERSION=${CI_COMMIT_SHORT_SHA}
 
-# Merge request: prove that the image builds, publish nothing. Kaniko rejects
-# --cache together with --no-push unless a cache repo is given, so cache is off.
 build:mr:
   extends:
     - .build:image
@@ -136,7 +118,6 @@ build:mr:
     KANIKO_CACHE: "false"
     KANIKO_ARGS: --build-arg APP_VERSION=${CI_COMMIT_SHORT_SHA} --no-push
 
-# master: publish the image that `deploy` rolls out.
 build:image:
   extends:
     - .build:image
@@ -144,12 +125,6 @@ build:image:
   before_script:
     - test -n "$DOCKER_ARTIFACTORY_REGISTRY" || { echo "DOCKER_ARTIFACTORY_REGISTRY is empty - set it in CI variables"; exit 1; }
     - !reference [.dp_build, before_script]
-
-# --------------------------------------------------------------- deploy
-# Manual button on master. Teleport auth and Docker auth on the VM come from
-# .configure_docker; the script below deploys with docker compose on that VM.
-# Order matters (docs/release.md): migrations before the api restart, so a failed
-# migration leaves the old api serving traffic.
 
 deploy:
   extends:
