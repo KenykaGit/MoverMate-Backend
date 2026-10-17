@@ -15,7 +15,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.domain.inventory.box import BoxStatus
-from app.domain.inventory.value_objects import QR_TOKEN_LENGTH
+from app.domain.inventory.value_objects import BOX_TITLE_MAX_LENGTH, QR_TOKEN_LENGTH
 from app.infrastructure.db.base import Base
 from app.infrastructure.db.constraints import ENUM_LENGTH, one_of
 
@@ -66,6 +66,8 @@ class BoxModel(Base):
     qr_token: Mapped[str] = mapped_column(String(32), unique=True)
     destination_room_id: Mapped[UUID]
     created_by_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"))
+    title: Mapped[str | None] = mapped_column(String(BOX_TITLE_MAX_LENGTH))
+    is_fragile: Mapped[bool]
     status: Mapped[str] = mapped_column(String(ENUM_LENGTH))
     status_changed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     is_active: Mapped[bool]

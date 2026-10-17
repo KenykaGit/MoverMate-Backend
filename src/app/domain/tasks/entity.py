@@ -6,7 +6,7 @@ from app.domain.common.entity import Entity
 from app.domain.common.ids import ProjectId, TaskId, UserId, new_id
 from app.domain.common.reminders import ReminderOffset
 from app.domain.tasks.errors import InvalidDueDateError, ReminderWithoutDueDateError
-from app.domain.tasks.value_objects import TaskDescription, TaskTemplate, TaskTitle
+from app.domain.tasks.value_objects import TaskDescription, TaskPhase, TaskTemplate, TaskTitle
 
 
 @dataclass(eq=False, kw_only=True, slots=True)
@@ -21,6 +21,7 @@ class Task(Entity[TaskId]):
     project_id: ProjectId
     title: TaskTitle
     description: TaskDescription | None
+    phase: TaskPhase
     due_at: datetime | None
     done_at: datetime | None
     """Set exactly when the task is done."""
@@ -36,6 +37,7 @@ class Task(Entity[TaskId]):
         project_id: ProjectId,
         title: TaskTitle,
         description: TaskDescription | None = None,
+        phase: TaskPhase = TaskPhase.BEFORE,
         due_at: datetime | None = None,
     ) -> Self:
         _check_due_at(due_at)
@@ -44,6 +46,7 @@ class Task(Entity[TaskId]):
             project_id=project_id,
             title=title,
             description=description,
+            phase=phase,
             due_at=due_at,
             done_at=None,
             assignee_ids=set(),
@@ -53,9 +56,12 @@ class Task(Entity[TaskId]):
 
     @classmethod
     def from_template(cls, template: TaskTemplate, *, project_id: ProjectId) -> Self:
-        """A copy of `template`; it keeps no link to the template."""
+        """A copy of `template`; it keeps no link to the template, so duplicates are allowed."""
         return cls.create(
-            project_id=project_id, title=template.title, description=template.description
+            project_id=project_id,
+            title=template.title,
+            description=template.description,
+            phase=template.phase,
         )
 
     @property
@@ -121,6 +127,9 @@ class Task(Entity[TaskId]):
 
     def rename(self, title: TaskTitle) -> None:
         self.title = title
+
+    def move_to_phase(self, phase: TaskPhase) -> None:
+        self.phase = phase
 
     def change_description(self, description: TaskDescription | None) -> None:
         self.description = description

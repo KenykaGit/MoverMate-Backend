@@ -15,7 +15,9 @@ from app.domain.tasks.value_objects import (
     TASK_DESCRIPTION_MAX_LENGTH,
     TASK_TITLE_MAX_LENGTH,
     TaskDescription,
+    TaskPhase,
     TaskTemplate,
+    TaskTemplateId,
     TaskTitle,
 )
 from tests.factories import NOW, make_task
@@ -44,20 +46,28 @@ def test_naive_due_time_is_rejected() -> None:
         make_task().reschedule(naive)
 
 
-def test_from_template_copies_title_and_description_only() -> None:
-    template = TaskTemplate(title=TaskTitle("Pack documents"), description=TaskDescription("All"))
+def test_from_template_copies_title_description_and_phase_only() -> None:
+    template = TaskTemplate(
+        id=TaskTemplateId("pack-documents"),
+        title=TaskTitle("Pack documents"),
+        phase=TaskPhase.DURING,
+        description=TaskDescription("All"),
+    )
     project_id = ProjectId(new_id())
 
-    task = Task.from_template(template, project_id=project_id)
+    first = Task.from_template(template, project_id=project_id)
+    second = Task.from_template(template, project_id=project_id)
 
-    assert (task.project_id, task.title, task.description) == (
+    assert (first.project_id, first.title, first.description, first.phase) == (
         project_id,
         template.title,
         template.description,
+        TaskPhase.DURING,
     )
-    assert task.due_at is None
-    assert not task.assignee_ids
-    assert not task.is_done
+    assert first != second  # no link to the template: adding it twice makes two tasks
+    assert first.due_at is None
+    assert not first.assignee_ids
+    assert not first.is_done
 
 
 class TestCompletion:
@@ -132,3 +142,12 @@ def test_assign_and_unassign_report_changes() -> None:
     assert task.assignee_ids == {user}
     assert task.unassign(user)
     assert not task.unassign(user)
+
+
+def test_phase_defaults_to_before_and_can_change() -> None:
+    assert make_task().phase is TaskPhase.BEFORE
+    task = make_task()
+
+    task.move_to_phase(TaskPhase.AFTER)
+
+    assert task.phase is TaskPhase.AFTER

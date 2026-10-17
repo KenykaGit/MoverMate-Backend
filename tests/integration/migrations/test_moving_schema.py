@@ -145,6 +145,7 @@ def _with(insert_row: Callable[..., Awaitable[Any]], **values: Any) -> Insert:
         (_with(insert_item, state="BROKEN"), "ck_items_state"),
         (_with(insert_task, is_done=True), "ck_tasks_done_at_iff_done"),
         (_with(insert_task, done_at=NOW), "ck_tasks_done_at_iff_done"),
+        (_with(insert_task, phase="SOMETIME"), "ck_tasks_phase"),
         (
             _with(insert_notification, type="TASK_REMINDER"),
             "ck_notifications_offset_iff_task_reminder",
@@ -156,6 +157,19 @@ def _with(insert_row: Callable[..., Awaitable[Any]], **values: Any) -> Insert:
         (
             _with(insert_notification, type="BOX_CONTENTS_REMINDER"),
             "ck_notifications_target_matches_type",
+        ),
+        (
+            # A moving date reminder is about the project: no task, no box.
+            _with(insert_notification, type="MOVING_DATE_REMINDER", reminder_offset_days=7),
+            "ck_notifications_target_matches_type",
+        ),
+        (
+            _with(insert_notification, type="MOVING_DATE_REMINDER", task_id=None),
+            "ck_notifications_offset_days_iff_moving_date_reminder",
+        ),
+        (
+            _with(insert_notification, reminder_offset_days=7),
+            "ck_notifications_offset_days_iff_moving_date_reminder",
         ),
         (_with(insert_notification, status="LATE"), "ck_notifications_status"),
         (_with(insert_notification, attempts=-1), "ck_notifications_attempts_non_negative"),
@@ -181,6 +195,15 @@ async def test_reminder_offset_range(connection: AsyncConnection, project: str) 
     )
 
     assert found == "ck_task_reminders_offset_hours_range"
+
+
+async def test_moving_reminder_offset_range(connection: AsyncConnection, project: str) -> None:
+    found = await violation(
+        insert(connection, "project_reminders", {"project_id": project, "offset_days": 0}),
+        connection,
+    )
+
+    assert found == "ck_project_reminders_offset_days_range"
 
 
 async def test_audit_entity_type_follows_the_action(
@@ -309,3 +332,20 @@ class TestUniqueAmongActive:
         found = await violation(insert_notification(connection, project, **reminder), connection)
 
         assert found == "uq_notifications_task_reminder_pending"
+
+    async def test_pending_moving_date_reminders(
+        self, connection: AsyncConnection, project: str
+    ) -> None:
+        user = await insert_user(connection)
+        reminder = {
+            "type": "MOVING_DATE_REMINDER",
+            "task_id": None,
+            "user_id": user,
+            "reminder_offset_days": 7,
+        }
+        await insert_notification(connection, project, **reminder, status="CANCELLED")
+        await insert_notification(connection, project, **reminder)
+
+        found = await violation(insert_notification(connection, project, **reminder), connection)
+
+        assert found == "uq_notifications_moving_date_pending"

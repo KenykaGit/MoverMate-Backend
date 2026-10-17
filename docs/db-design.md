@@ -19,8 +19,8 @@
 | 6 | Удаление коробки с вещами допустимо (подтверждение на фронтенде), каскадное и мягкое. |
 | 7 | Поиск вещей — полнотекстовый (FTS, конфиг `russian`), без отдельной колонки нормализации. |
 | 8 | Ответственные назначаются на задачу и должны быть участниками проекта (`TaskCollaborator`). Их может быть несколько. |
-| 9 | У задачи нет этапа (`phase`). Срок — `due_at` с временем, необязательный. |
-| 10 | Шаблоны задач лежат в файле, в `Task` копируются один раз, в транзакции создания проекта. Связь задачи с шаблоном не хранится: скопированная задача ничем не отличается от созданной вручную. Срок и ответственные у шаблона не задаются. |
+| 9 | У задачи есть этап `phase`: `BEFORE`, `DURING` (день переезда) или `AFTER`, по умолчанию `BEFORE`. На нём построен экран плана (три колонки). Срок — `due_at` с временем, необязательный. |
+| 10 | Шаблоны задач лежат в файле, у каждого стабильный `id` и `phase`. Пользователь сам выбирает шаблоны, и они копируются в задачи; автоматического копирования при создании проекта нет. Связь задачи с шаблоном не хранится, дубли допустимы. Срок и ответственные у шаблона не задаются. |
 | 11 | Чек-лист первого дня — не отдельная сущность, а предметы с приоритетом `FIRST_NECESSITY`. Приоритет пользователь выставляет сам, файла-шаблона предметов нет. Пункт выполнен, когда вещь в состоянии `TAKEN_OUT`. |
 | 12 | Уведомления — только Web Push (VAPID). Очередь отправки лежит в БД, доставку выполняет taskiq с брокером Redis. |
 | 13 | ML-часть (раздел 6 ТЗ) не реализуется. |
@@ -30,6 +30,9 @@
 | 17 | Удалённый пользователь освобождает `username`. Удалить пользователя, который владеет активными проектами, нельзя. |
 | 18 | Переходы вещи между состояниями заданы явной матрицей (раздел 5.2). |
 | 19 | `created_at` и `updated_at` ставит БД (`server_default now()`, `onupdate`), домен их не хранит. Времена с бизнес-смыслом (`status_changed_at`, `done_at`, `scheduled_at`, время записи журнала) задаёт домен. |
+| 20 | У коробки есть краткое описание `title` и флаг `is_fragile` (печатается на этикетке). В ТЗ их нет, но без описания коробку не найти взглядом в длинном списке. |
+| 21 | Участникам напоминают о дате переезда: смещения в днях хранятся у проекта (`ProjectReminder`), тип уведомления `MOVING_DATE_REMINDER`. |
+| 22 | Удалить проект может только владелец (403 `not_project_owner`). |
 
 ---
 
@@ -37,7 +40,6 @@
 
 | Пункт ТЗ | Решение | Комментарий |
 |----------|---------|-------------|
-| 5.1: задачи делятся на три этапа | Этапов нет | Задачи различаются сроком `due_at`. Шаблоны задач без этапа. |
 | 8: «без внешних сервисов», «нет скрытых передач данных третьим лицам» | Web Push | Push идёт через сервис производителя браузера или ОС (Google, Mozilla, Apple). Содержимое шифруется, но сам факт отправки виден этим сервисам. Подписка добровольная, приложение работает и без неё. Исключение нужно явно записать в README. |
 | 8: «запуск без сложных внешних настроек» | taskiq требует брокер, используется Redis | Требование понято как «не нужно выпускать токены и вводить ключи вручную». Redis поднимается вместе с остальными сервисами в `docker-compose`. См. раздел 10.4. |
 | 5.4: чек-лист первого дня | Приоритет предмета | Отдельной таблицы нет. |
@@ -80,6 +82,11 @@ entity Project {
   * updated_at : timestamptz
 }
 
+entity ProjectReminder {
+  * project_id
+  * offset_days : int
+}
+
 entity ProjectCollaborator {
   * project_id
   * user_id
@@ -104,6 +111,7 @@ entity Task {
   --
   * title
   description
+  * phase [BEFORE, DURING, AFTER]
   due_at : timestamptz
   * is_done : boolean
   done_at : timestamptz
@@ -134,6 +142,8 @@ entity Box {
   * qr_token <<unique>>
   * destination_room_id
   * created_by_id
+  title
+  * is_fragile : boolean
   --
   * status [PACKING, PACKED, LOADED, DELIVERED, UNPACKED]
   * status_changed_at : timestamptz
@@ -168,8 +178,9 @@ entity Notification {
   task_id
   box_id
   --
-  * type [TASK_ASSIGNED, TASK_REMINDER, BOX_CONTENTS_REMINDER]
+  * type [TASK_ASSIGNED, TASK_REMINDER, BOX_CONTENTS_REMINDER, MOVING_DATE_REMINDER]
   reminder_offset_hours : int
+  reminder_offset_days : int
   * scheduled_at : timestamptz
   sent_at : timestamptz
   * status [PENDING, SENT, FAILED, CANCELLED, SKIPPED]
@@ -206,6 +217,7 @@ entity AuditLog {
 User ||--o{ Project : owner
 User ||--o{ ProjectCollaborator
 Project ||--o{ ProjectCollaborator
+Project ||--o{ ProjectReminder
 Project ||--o{ Room
 Project ||--o{ Task
 Project ||--o{ Box
@@ -251,6 +263,10 @@ User ||--o{ PushSubscription
 | qr_code_strategy | varchar + CHECK | да | `PROTECTED` (по умолчанию) или `OPEN`. Проверяется в момент запроса, поэтому переключение действует и на уже напечатанные этикетки. |
 | is_active, created_at, updated_at | | да | |
 
+Удаляет проект только владелец (иначе 403), остальные участники могут лишь выйти из него.
+
+**ProjectReminder** (часть агрегата `Project`): PK `(project_id, offset_days)`, `CHECK (offset_days BETWEEN 1 AND 365)`. За сколько дней до `moving_date` напомнить всем участникам. Точку отсчёта для даты без времени (часовой пояс проекта или фиксированное время в UTC) выбирает application, решение ещё не принято.
+
 ### 4.3. ProjectCollaborator
 
 PK `(project_id, user_id)`.
@@ -278,7 +294,8 @@ PK `(project_id, user_id)`.
 |------|-----|-------|----------|
 | project_id | FK | да | |
 | title | varchar(200) | да | |
-| description | text | нет | |
+| description | varchar(5000) | нет | |
+| phase | varchar + CHECK | да | `BEFORE` (по умолчанию), `DURING` (день переезда), `AFTER`. Колонка на экране плана. |
 | due_at | timestamptz | нет | Срок с временем. Напоминания возможны только при заданном сроке. |
 | is_done | bool | да | `CHECK (is_done = (done_at IS NOT NULL))`. |
 | done_at | timestamptz | нет | |
@@ -286,7 +303,7 @@ PK `(project_id, user_id)`.
 
 `UNIQUE (id, project_id)` — цель составного внешнего ключа из `TaskCollaborator`.
 
-Сортировка списка задач: `due_at NULLS LAST, id`.
+Сортировка задач внутри этапа: `due_at NULLS LAST, id`; индекс `(project_id, phase, due_at) WHERE is_active`.
 
 ### 4.6. TaskCollaborator (ответственные за задачу)
 
@@ -309,6 +326,8 @@ PK `(task_id, offset_hours)`. `offset_hours` — за сколько часов 
 | qr_token | varchar(32) | да | Случайный токен (`secrets.token_urlsafe(16)`, 128 бит), `UNIQUE`. В QR кодируется ссылка с токеном, а не номером. |
 | destination_room_id | FK Room | да | Комната назначения. |
 | created_by_id | FK User | да | Адресат напоминания об отложенном содержимом. |
+| title | varchar(200) | нет | Краткое описание («Посуда на первое время»). |
+| is_fragile | bool | да | «Хрупкое», печатается на этикетке. |
 | status | varchar + CHECK | да | См. 5.1. |
 | status_changed_at | timestamptz | да | |
 | is_active, created_at, updated_at | | да | |
@@ -351,16 +370,17 @@ CHECK ((state = 'IN_BOX') = (box_id IS NOT NULL))
 | Поле | Описание |
 |------|----------|
 | project_id, user_id | Адресат и проект. `project_id` нужен для массовой отмены при удалении участника. |
-| type | `TASK_ASSIGNED`, `TASK_REMINDER`, `BOX_CONTENTS_REMINDER`. |
-| task_id / box_id | Ровно одно из двух, в зависимости от типа. |
+| type | `TASK_ASSIGNED`, `TASK_REMINDER`, `BOX_CONTENTS_REMINDER`, `MOVING_DATE_REMINDER`. |
+| task_id / box_id | Ровно одно из двух, в зависимости от типа; у `MOVING_DATE_REMINDER` оба пусты (уведомление о самом проекте). |
 | reminder_offset_hours | Только для `TASK_REMINDER`: смещение напоминания задачи в часах. |
+| reminder_offset_days | Только для `MOVING_DATE_REMINDER`: за сколько дней до переезда. |
 | scheduled_at | Когда отправлять. |
 | status | `PENDING`, `SENT`, `FAILED`, `CANCELLED`, `SKIPPED` (у пользователя нет активных подписок). |
 | attempts, last_error, sent_at, created_at | Служебные поля. |
 
 Ограничения:
-- `CHECK` на соответствие типа и заполненных полей: `BOX_CONTENTS_REMINDER` требует `box_id` и пустой `task_id`, остальные типы требуют `task_id` и пустой `box_id`; `reminder_offset_hours` заполнен тогда и только тогда, когда тип `TASK_REMINDER`.
-- Частичные `UNIQUE`, защищающие от дублей ожидающих уведомлений: `(task_id, user_id, reminder_offset_hours) WHERE type = 'TASK_REMINDER' AND status = 'PENDING'` и `(box_id, user_id) WHERE type = 'BOX_CONTENTS_REMINDER' AND status = 'PENDING'`.
+- `CHECK` на соответствие типа и заполненных полей: `BOX_CONTENTS_REMINDER` требует `box_id` и пустой `task_id`; `TASK_ASSIGNED` и `TASK_REMINDER` требуют `task_id` и пустой `box_id`; `MOVING_DATE_REMINDER` — оба пустых. `reminder_offset_hours` заполнен тогда и только тогда, когда тип `TASK_REMINDER`, `reminder_offset_days` — когда `MOVING_DATE_REMINDER`.
+- Частичные `UNIQUE`, защищающие от дублей ожидающих уведомлений: `(task_id, user_id, reminder_offset_hours) WHERE type = 'TASK_REMINDER' AND status = 'PENDING'`, `(box_id, user_id) WHERE type = 'BOX_CONTENTS_REMINDER' AND status = 'PENDING'` и `(project_id, user_id, reminder_offset_days) WHERE type = 'MOVING_DATE_REMINDER' AND status = 'PENDING'`.
 - Индекс для выборки: `(scheduled_at) WHERE status = 'PENDING'`.
 - Текст уведомления в таблице не хранится: он собирается в момент отправки из актуальных данных.
 
@@ -544,7 +564,7 @@ ORDER BY ts_rank_cd(to_tsvector('russian'::regconfig, i.name),
 
 | Режим | Без входа | Участник проекта | Вошедший, не участник |
 |-------|-----------|------------------|-----------------------|
-| `PROTECTED` (по умолчанию) | нет ни чтения, ни записи (перенаправление на вход) | чтение и запись | 404 |
+| `PROTECTED` (по умолчанию) | нет ни чтения, ни записи: 401, клиент сам отправляет на вход и возвращает на ту же ссылку | чтение и запись | 404 |
 | `OPEN` | только чтение карточки | чтение и запись | только чтение |
 
 Изменять статусы и содержимое могут только участники проекта.
@@ -555,7 +575,7 @@ ORDER BY ts_rank_cd(to_tsvector('russian'::regconfig, i.name),
 
 | Объект | Что происходит |
 |--------|----------------|
-| Project | `is_active = false`, дочерние данные не трогаются, все запросы проверяют активность проекта. |
+| Project | Только владелец (иначе 403). `is_active = false`, дочерние данные не трогаются, все запросы проверяют активность проекта. Ожидающие уведомления проекта отменяются. |
 | Box | `is_active = false` и в той же транзакции `is_active = false` у вещей `IN_BOX` этой коробки (каскад). Вещи с пустым `box_id` не затрагиваются. Ожидающие уведомления по коробке отменяются. Номер освобождается. Подтверждение запрашивает фронтенд. |
 | Item | `is_active = false`. |
 | Room | Допущение: запрещено, пока на комнату ссылаются активные коробки или вещи (см. раздел 12). |
@@ -576,6 +596,7 @@ ORDER BY ts_rank_cd(to_tsvector('russian'::regconfig, i.name),
 | `BOX_CONTENTS_REMINDER` | только создателю коробки (`created_by_id`) | через заданное им время | в момент отправки коробка активна и в статусе `PACKING` |
 | `TASK_ASSIGNED` | каждому добавленному ответственному, кроме того, кто назначил себя сам | сразу после назначения | — |
 | `TASK_REMINDER` | всем ответственным за задачу | `due_at − offset_hours` для каждого смещения задачи | задача активна и не выполнена |
+| `MOVING_DATE_REMINDER` | всем участникам проекта | за `offset_days` дней до `moving_date` (точка отсчёта — см. 4.2) | проект активен |
 
 ### 10.2. Правила ведения очереди
 
@@ -587,6 +608,7 @@ ORDER BY ts_rank_cd(to_tsvector('russian'::regconfig, i.name),
 - Если `scheduled_at` уже в прошлом, уведомление не создаётся.
 - При изменении `due_at` ожидающие уведомления пересчитываются, а те, что оказались в прошлом, отменяются.
 - Отмена происходит при: выполнении задачи, удалении задачи, удалении ответственного, удалении смещения, очистке `due_at`.
+- Напоминания о дате переезда создаются при добавлении смещения или участника, пересчитываются при изменении `moving_date`, отменяются при удалении смещения или проекта и при выходе участника.
 - Если у пользователя нет активных подписок, уведомление получает статус `SKIPPED`.
 
 ### 10.3. Отправка
@@ -637,13 +659,14 @@ FOR UPDATE SKIP LOCKED;
 | users | `UNIQUE (username) WHERE is_active`; `CHECK (username = lower(username))` | Уникальность имён без учёта регистра среди активных. |
 | projects | `INDEX (owner_id)`; `CHECK` значений `qr_code_strategy` | Список проектов. |
 | project_collaborators | PK `(project_id, user_id)`; `INDEX (user_id)` | Участники, проекты пользователя. |
+| project_reminders | PK `(project_id, offset_days)`; `CHECK (offset_days BETWEEN 1 AND 365)`; FK `ON DELETE CASCADE` | Нет дублей напоминаний о дате переезда. |
 | rooms | `UNIQUE (project_id, id)`; `UNIQUE (project_id, kind, name) WHERE is_active`; `CHECK` значений `kind` | Цель составных FK, нет дублей имён. |
-| tasks | `UNIQUE (id, project_id)`; `INDEX (project_id, due_at) WHERE is_active`; `CHECK (is_done = (done_at IS NOT NULL))` | Цель FK, список задач. |
+| tasks | `UNIQUE (id, project_id)`; `INDEX (project_id, due_at) WHERE is_active`; `INDEX (project_id, phase, due_at) WHERE is_active`; `CHECK (is_done = (done_at IS NOT NULL))`; `CHECK` значений `phase` | Цель FK, план по этапам, ближайшая задача. |
 | task_reminders | PK `(task_id, offset_hours)`; `CHECK (offset_hours BETWEEN 1 AND 8760)`; FK `ON DELETE CASCADE` | Нет дублей напоминаний, разумный диапазон. |
 | task_collaborators | PK `(task_id, user_id)`; два составных FK `ON DELETE CASCADE` (4.6) | Ответственные только из участников проекта. |
 | boxes | `UNIQUE (project_id, number) WHERE is_active`; `UNIQUE (qr_token)`; `UNIQUE (project_id, id)`; составной FK на `rooms`; `CHECK (number > 0)`; `CHECK (length(qr_token) = 22)`; `CHECK` значений `status`; триггер переходов `status` (5.1); `INDEX (project_id, status) WHERE is_active`; `INDEX (project_id, destination_room_id) WHERE is_active` | Номера, QR, переходы, счётчики по статусам и комнатам. |
 | items | `CHECK ((state = 'IN_BOX') = (box_id IS NOT NULL))`; `CHECK (quantity BETWEEN 1 AND 10000)`; `CHECK (priority BETWEEN 0 AND 3)`; `CHECK` значений `state`; триггер переходов `state` (5.2); составные FK на `boxes` и `rooms`; GIN FTS (раздел 7); `INDEX (box_id) WHERE box_id IS NOT NULL`; `INDEX (project_id, state, priority) WHERE is_active`; `INDEX (project_id, source_room_id) WHERE is_active AND state = 'IN_BOX'` | Инварианты, поиск, содержимое коробки, список упаковки, подсказки. |
-| notifications | `CHECK` по типам и значениям; `CHECK (attempts >= 0)`; триггер «статус меняется только из `PENDING`»; два частичных `UNIQUE` (4.10); `INDEX (scheduled_at) WHERE status = 'PENDING'`; `INDEX (project_id, user_id) WHERE status = 'PENDING'` | Нет дублей, быстрый выбор, массовая отмена при выходе из проекта. |
+| notifications | `CHECK` по типам и значениям; `CHECK (attempts >= 0)`; триггер «статус меняется только из `PENDING`»; три частичных `UNIQUE` (4.10); `INDEX (scheduled_at) WHERE status = 'PENDING'`; `INDEX (project_id, user_id) WHERE status = 'PENDING'` | Нет дублей, быстрый выбор, массовая отмена при выходе из проекта. |
 | push_subscriptions | `UNIQUE (endpoint)`; `INDEX (user_id) WHERE is_active` | Upsert подписки, отправка. |
 | audit_logs | `INDEX (project_id, created_at)`; `CHECK` значений `action` и `entity_type`; `CHECK (entity_type = split_part(action, '_', 1))` | Просмотр журнала (B-tree читается в обратном порядке так же быстро, `DESC` не нужен). |
 
@@ -671,7 +694,7 @@ FOR UPDATE SKIP LOCKED;
 
 | Требование | Реализация |
 |------------|------------|
-| 5.1 Проект, шаблоны, свои задачи, сроки, ответственные, отметка выполнения | `Project`, `Task`, `TaskCollaborator`, файл шаблонов; этапов нет (раздел 2) |
+| 5.1 Проект, шаблоны, свои задачи, этапы, сроки, ответственные, отметка выполнения | `Project`, `Task` (`phase`), `TaskCollaborator`, файл шаблонов с ручным выбором |
 | 5.2 Коробки, номера, комната, вещи, статусы, отложенное содержимое, удаление | `Box`, `Item`, `Notification`, раздел 6, раздел 9 |
 | 5.3 Поиск по названию и номеру, этикетка с номером, комнатой и QR, открытие по QR | Раздел 7, раздел 8 |
 | 5.4 Погрузка по комнатам, доставка, счётчики по статусам, прогресс распаковки по комнатам, чек-лист первого дня, потерянные вещи, подсказки | Агрегаты по `Box.status` и `destination_room_id`; приоритет `FIRST_NECESSITY`; `state = LOST`; разделы 5.3 и 5.4 |
@@ -693,11 +716,11 @@ FOR UPDATE SKIP LOCKED;
 | Модуль | Агрегат | Таблицы | Инварианты в домене |
 |--------|---------|---------|---------------------|
 | `users` | `User` | `users` | формат `username`, мягкое удаление |
-| `projects` | `Project` (участники внутри) | `project`, `project_collaborator` | владелец всегда участник и не удаляется; доступ по QR (раздел 8) |
-| `inventory` | `Room`, `Box`, `Item` (три агрегата) | `room`, `box`, `item` | вид комнаты у коробки и вещи; один проект; переходы статусов (5.1) и состояний (5.2); `box_id` только у `IN_BOX` |
-| `tasks` | `Task` (ответственные и напоминания внутри) | `task`, `task_collaborator`, `task_reminder` | `done_at` ⇔ выполнена; напоминания только при сроке |
-| `notifications` | `Notification`, `PushSubscription` | `notification`, `push_subscription` | тип ⇔ заполненные поля; переходы только из `PENDING`; повторы с задержкой |
-| `audit` | `AuditEntry` (неизменяемая запись) | `audit_log` | тип объекта выводится из действия |
+| `projects` | `Project` (участники и напоминания о дате внутри) | `projects`, `project_collaborators`, `project_reminders` | владелец всегда участник и не удаляется; удаляет проект только владелец; доступ по QR (раздел 8) |
+| `inventory` | `Room`, `Box`, `Item` (три агрегата) | `rooms`, `boxes`, `items` | вид комнаты у коробки и вещи; один проект; переходы статусов (5.1) и состояний (5.2); `box_id` только у `IN_BOX` |
+| `tasks` | `Task` (ответственные и напоминания внутри) | `tasks`, `task_collaborators`, `task_reminders` | `done_at` ⇔ выполнена; напоминания только при сроке |
+| `notifications` | `Notification`, `PushSubscription` | `notifications`, `push_subscriptions` | тип ⇔ заполненные поля; переходы только из `PENDING`; повторы с задержкой |
+| `audit` | `AuditEntry` (неизменяемая запись) | `audit_logs` | тип объекта выводится из действия |
 
 Правила, которые требуют данных нескольких агрегатов (номер коробки, участие ответственного в проекте, запрет удаления комнаты и владельца проектов, каскад удаления коробки, ведение очереди уведомлений), выполняют use cases в одной транзакции.
 

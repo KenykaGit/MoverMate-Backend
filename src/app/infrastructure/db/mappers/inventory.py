@@ -6,6 +6,7 @@ from app.domain.inventory.item import Item, ItemState
 from app.domain.inventory.room import Room
 from app.domain.inventory.value_objects import (
     BoxNumber,
+    BoxTitle,
     ItemName,
     Priority,
     QrToken,
@@ -50,6 +51,8 @@ class BoxMapper:
             qr_token=QrToken(model.qr_token),
             destination_room_id=RoomId(model.destination_room_id),
             created_by=UserId(model.created_by_id),
+            title=None if model.title is None else BoxTitle(model.title),
+            is_fragile=model.is_fragile,
             status=BoxStatus(model.status),
             status_changed_at=model.status_changed_at,
             is_active=model.is_active,
@@ -64,6 +67,8 @@ class BoxMapper:
             qr_token=box.qr_token.value,
             destination_room_id=box.destination_room_id,
             created_by_id=box.created_by,
+            title=None if box.title is None else box.title.value,
+            is_fragile=box.is_fragile,
             status=box.status.value,
             status_changed_at=box.status_changed_at,
             is_active=box.is_active,

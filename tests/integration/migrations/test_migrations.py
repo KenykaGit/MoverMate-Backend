@@ -85,6 +85,7 @@ async def test_partial_index_predicates_match_the_models(engine: AsyncEngine) ->
                 "(is_active AND ((state)::text = 'IN_BOX'::text))"
             ),
             "ix_tasks_project_id_due_at_active": "is_active",
+            "ix_tasks_project_id_phase_due_at_active": "is_active",
             "ix_notifications_scheduled_at_pending": "((status)::text = 'PENDING'::text)",
             "ix_notifications_project_id_user_id_pending": "((status)::text = 'PENDING'::text)",
             "uq_notifications_task_reminder_pending": (
@@ -92,6 +93,10 @@ async def test_partial_index_predicates_match_the_models(engine: AsyncEngine) ->
             ),
             "uq_notifications_box_contents_pending": (
                 "(((type)::text = 'BOX_CONTENTS_REMINDER'::text)"
+                " AND ((status)::text = 'PENDING'::text))"
+            ),
+            "uq_notifications_moving_date_pending": (
+                "(((type)::text = 'MOVING_DATE_REMINDER'::text)"
                 " AND ((status)::text = 'PENDING'::text))"
             ),
             "ix_push_subscriptions_user_id_active": "is_active",

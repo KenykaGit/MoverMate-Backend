@@ -9,6 +9,7 @@ from app.domain.inventory.errors import (
     BoxStatusTransitionError,
     CrossProjectReferenceError,
     InvalidBoxNumberError,
+    InvalidBoxTitleError,
     InvalidItemNameError,
     InvalidQrTokenError,
     InvalidQuantityError,
@@ -18,10 +19,12 @@ from app.domain.inventory.errors import (
 )
 from app.domain.inventory.item import ITEM_TRANSITIONS, Item, ItemState
 from app.domain.inventory.value_objects import (
+    BOX_TITLE_MAX_LENGTH,
     ITEM_NAME_MAX_LENGTH,
     QUANTITY_MAX,
     ROOM_NAME_MAX_LENGTH,
     BoxNumber,
+    BoxTitle,
     ItemName,
     Priority,
     QrToken,
@@ -45,6 +48,11 @@ class TestValueObjects:
     def test_item_name_length(self, value: str) -> None:
         with pytest.raises(InvalidItemNameError):
             ItemName(value)
+
+    @pytest.mark.parametrize("value", [" ", "a" * (BOX_TITLE_MAX_LENGTH + 1)])
+    def test_box_title_length(self, value: str) -> None:
+        with pytest.raises(InvalidBoxTitleError):
+            BoxTitle(value)
 
     @pytest.mark.parametrize("value", [0, -1])
     def test_box_number_is_positive(self, value: int) -> None:
@@ -125,6 +133,19 @@ class TestBoxStatus:
         assert box.status is S.PACKING
         assert box.status_changed_at == NOW
         assert box.is_active
+        assert box.title is None
+        assert not box.is_fragile
+
+    def test_title_and_fragility_are_plain_attributes(self) -> None:
+        box = make_box()
+
+        box.change_title(BoxTitle("Dishes for day one"))
+        box.set_fragile(True)
+        assert (box.title, box.is_fragile) == (BoxTitle("Dishes for day one"), True)
+
+        box.change_title(None)
+        box.set_fragile(False)
+        assert (box.title, box.is_fragile) == (None, False)
 
     def test_transitions_are_single_steps_both_ways(self) -> None:
         assert {

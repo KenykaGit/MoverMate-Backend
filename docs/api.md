@@ -57,6 +57,7 @@
 | 401 | `not_authenticated` | нет токена, токен невалиден или истёк, пользователь удалён |
 | 401 | `invalid_credentials` | неверное имя пользователя или пароль (неотличимы намеренно) |
 | 401 | `invalid_refresh_token` | refresh-токен неизвестен, истёк, отозван или использован повторно |
+| 403 | `not_project_owner` | действие доступно только владельцу проекта (удаление проекта) |
 | 404 | `user_not_found` | нет объекта |
 | 404 / 405 | `not_found`, `method_not_allowed` | нет маршрута или метода |
 | 409 | `username_taken` | имя пользователя занято активным пользователем |
@@ -67,7 +68,7 @@
 | 409 | `reminder_without_due_date` | напоминание у задачи без срока |
 | 422 | `validation_error` | тело, query или заголовок не соответствуют схеме |
 | 422 | `invalid_username`, `invalid_password`, `invalid_value` | значение нарушает правило домена |
-| 422 | `invalid_project_name`, `invalid_address`, `invalid_room_name`, `invalid_box_number`, `invalid_qr_token`, `invalid_item_name`, `invalid_quantity`, `invalid_task_title`, `invalid_task_description`, `invalid_due_date`, `invalid_reminder_offset`, `invalid_push_subscription` | значение нарушает правило домена (длина, диапазон, формат; срок без часового пояса) |
+| 422 | `invalid_project_name`, `invalid_address`, `invalid_room_name`, `invalid_box_number`, `invalid_box_title`, `invalid_qr_token`, `invalid_item_name`, `invalid_quantity`, `invalid_task_title`, `invalid_task_description`, `invalid_due_date`, `invalid_reminder_offset`, `invalid_moving_reminder_offset`, `invalid_push_subscription` | значение нарушает правило домена (длина, диапазон, формат; срок без часового пояса) |
 | 422 | `wrong_room_kind` | коробке нужна комната «куда», вещи — комната «откуда» |
 | 422 | `cross_project_reference` | ссылка на комнату или коробку другого проекта |
 | 422 | `invalid_pagination` | `limit` вне 1..100 или `offset < 0` |

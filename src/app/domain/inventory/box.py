@@ -8,7 +8,7 @@ from app.domain.common.entity import Entity
 from app.domain.common.ids import BoxId, ProjectId, RoomId, UserId, new_id
 from app.domain.inventory.errors import BoxStatusTransitionError
 from app.domain.inventory.room import Room
-from app.domain.inventory.value_objects import BoxNumber, QrToken, RoomKind
+from app.domain.inventory.value_objects import BoxNumber, BoxTitle, QrToken, RoomKind
 
 
 class BoxStatus(StrEnum):
@@ -56,6 +56,10 @@ class Box(Entity[BoxId]):
     destination_room_id: RoomId
     created_by: UserId
     """Receives the reminder to fill in the contents."""
+    title: BoxTitle | None
+    """A short description that tells boxes apart in a long list ("Dishes for day one")."""
+    is_fragile: bool
+    """Printed on the label."""
     status: BoxStatus
     status_changed_at: datetime
     is_active: bool
@@ -70,6 +74,8 @@ class Box(Entity[BoxId]):
         destination: Room,
         created_by: UserId,
         now: datetime,
+        title: BoxTitle | None = None,
+        is_fragile: bool = False,
     ) -> Self:
         """A new box being packed, headed for `destination`."""
         destination.ensure_usable_as(RoomKind.DESTINATION, project_id=project_id)
@@ -80,6 +86,8 @@ class Box(Entity[BoxId]):
             qr_token=QrToken.generate(),
             destination_room_id=destination.id,
             created_by=created_by,
+            title=title,
+            is_fragile=is_fragile,
             status=BoxStatus.PACKING,
             status_changed_at=now,
             is_active=True,
@@ -88,6 +96,12 @@ class Box(Entity[BoxId]):
     def change_destination(self, room: Room) -> None:
         room.ensure_usable_as(RoomKind.DESTINATION, project_id=self.project_id)
         self.destination_room_id = room.id
+
+    def change_title(self, title: BoxTitle | None) -> None:
+        self.title = title
+
+    def set_fragile(self, is_fragile: bool) -> None:
+        self.is_fragile = is_fragile
 
     def change_status(self, status: BoxStatus, *, now: datetime) -> BoxStatusChange | None:
         """Move one step forward or back. The current status again is a no-op (None).

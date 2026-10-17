@@ -1,7 +1,12 @@
 from app.domain.common.ids import ProjectId, UserId
+from app.domain.common.reminders import MovingReminderOffset
 from app.domain.projects.entity import Project
 from app.domain.projects.value_objects import Address, ProjectName, QrCodeStrategy
-from app.infrastructure.db.models.project import ProjectCollaboratorModel, ProjectModel
+from app.infrastructure.db.models.project import (
+    ProjectCollaboratorModel,
+    ProjectModel,
+    ProjectReminderModel,
+)
 
 
 class ProjectMapper:
@@ -18,6 +23,7 @@ class ProjectMapper:
             destination_address=_address(model.destination_address),
             qr_code_strategy=QrCodeStrategy(model.qr_code_strategy),
             member_ids={UserId(row.user_id) for row in model.collaborators},
+            moving_reminders={MovingReminderOffset(row.offset_days) for row in model.reminders},
             is_active=model.is_active,
         )
 
@@ -36,6 +42,10 @@ class ProjectMapper:
             collaborators=[
                 ProjectCollaboratorModel(project_id=project.id, user_id=user_id)
                 for user_id in sorted(project.member_ids)
+            ],
+            reminders=[
+                ProjectReminderModel(project_id=project.id, offset_days=offset.days)
+                for offset in sorted(project.moving_reminders)
             ],
         )
 

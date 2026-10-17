@@ -1,7 +1,7 @@
 from app.domain.common.ids import ProjectId, TaskId, UserId
 from app.domain.common.reminders import ReminderOffset
 from app.domain.tasks.entity import Task
-from app.domain.tasks.value_objects import TaskDescription, TaskTitle
+from app.domain.tasks.value_objects import TaskDescription, TaskPhase, TaskTitle
 from app.infrastructure.db.models.task import TaskCollaboratorModel, TaskModel, TaskReminderModel
 
 
@@ -15,6 +15,7 @@ class TaskMapper:
             project_id=ProjectId(model.project_id),
             title=TaskTitle(model.title),
             description=None if model.description is None else TaskDescription(model.description),
+            phase=TaskPhase(model.phase),
             due_at=model.due_at,
             done_at=model.done_at,
             assignee_ids={UserId(row.user_id) for row in model.assignees},
@@ -30,6 +31,7 @@ class TaskMapper:
             project_id=task.project_id,
             title=task.title.value,
             description=None if task.description is None else task.description.value,
+            phase=task.phase.value,
             due_at=task.due_at,
             is_done=task.is_done,
             done_at=task.done_at,

@@ -16,8 +16,13 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.domain.common.reminders import REMINDER_OFFSET_MAX_HOURS, REMINDER_OFFSET_MIN_HOURS
-from app.domain.tasks.value_objects import TASK_DESCRIPTION_MAX_LENGTH, TASK_TITLE_MAX_LENGTH
+from app.domain.tasks.value_objects import (
+    TASK_DESCRIPTION_MAX_LENGTH,
+    TASK_TITLE_MAX_LENGTH,
+    TaskPhase,
+)
 from app.infrastructure.db.base import Base
+from app.infrastructure.db.constraints import ENUM_LENGTH, one_of
 
 
 class TaskModel(Base):
@@ -31,13 +36,23 @@ class TaskModel(Base):
             "due_at",
             postgresql_where=text("is_active"),
         ),
+        # The plan screen: one column per phase, ordered by due time.
+        Index(
+            "ix_tasks_project_id_phase_due_at_active",
+            "project_id",
+            "phase",
+            "due_at",
+            postgresql_where=text("is_active"),
+        ),
         CheckConstraint("is_done = (done_at IS NOT NULL)", name="done_at_iff_done"),
+        CheckConstraint(one_of("phase", TaskPhase), name="phase"),
     )
 
     id: Mapped[UUID] = mapped_column(primary_key=True)
     project_id: Mapped[UUID] = mapped_column(ForeignKey("projects.id"))
     title: Mapped[str] = mapped_column(String(TASK_TITLE_MAX_LENGTH))
     description: Mapped[str | None] = mapped_column(String(TASK_DESCRIPTION_MAX_LENGTH))
+    phase: Mapped[str] = mapped_column(String(ENUM_LENGTH))
     due_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     is_done: Mapped[bool]
     done_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

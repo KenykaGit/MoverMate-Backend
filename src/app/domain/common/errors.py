@@ -9,3 +9,7 @@ class DomainError(Exception):
 
 class InvalidReminderOffsetError(DomainError):
     """The reminder offset is out of the allowed range of hours."""
+
+
+class InvalidMovingReminderOffsetError(DomainError):
+    """The moving date reminder offset is out of the allowed range of days."""

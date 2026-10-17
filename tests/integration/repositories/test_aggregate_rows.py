@@ -13,15 +13,15 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.domain.audit.entity import AuditAction, AuditEntry
 from app.domain.common.ids import UserId
-from app.domain.common.reminders import ReminderOffset
+from app.domain.common.reminders import MovingReminderOffset, ReminderOffset
 from app.domain.inventory.box import Box
 from app.domain.inventory.item import Item
-from app.domain.inventory.value_objects import BoxNumber, ItemName, RoomKind
+from app.domain.inventory.value_objects import BoxNumber, BoxTitle, ItemName, RoomKind
 from app.domain.notifications.notification import BoxContentsReminder, Notification
 from app.domain.notifications.push_subscription import PushEndpoint, PushKeys, PushSubscription
 from app.domain.projects.entity import Project
 from app.domain.tasks.entity import Task
-from app.domain.tasks.value_objects import TaskTitle
+from app.domain.tasks.value_objects import TaskPhase, TaskTitle
 from app.infrastructure.db.base import Base
 from app.infrastructure.db.mappers.audit import AuditEntryMapper
 from app.infrastructure.db.mappers.inventory import BoxMapper, ItemMapper, RoomMapper
@@ -84,17 +84,23 @@ async def project_with_users(session_maker: SessionMaker, members: int = 0) -> P
     return project
 
 
-async def test_project_members_follow_the_aggregate(session_maker: SessionMaker) -> None:
+async def test_project_members_and_reminders_follow_the_aggregate(
+    session_maker: SessionMaker,
+) -> None:
     project = await project_with_users(session_maker, members=2)
+    project.add_moving_reminder(MovingReminderOffset(7))
+    await merge(session_maker, ProjectMapper.to_model(project))
     stored = ProjectMapper.to_domain(await load(session_maker, ProjectModel, project.id))
     assert state(stored) == state(project)
 
     leaving = sorted(project.member_ids - {project.owner_id})[0]
     project.remove_member(leaving)
+    project.remove_moving_reminder(MovingReminderOffset(7))
+    project.add_moving_reminder(MovingReminderOffset(1))
     await merge(session_maker, ProjectMapper.to_model(project))
 
     stored = ProjectMapper.to_domain(await load(session_maker, ProjectModel, project.id))
-    assert stored.member_ids == project.member_ids
+    assert state(stored) == state(project)
     assert leaving not in stored.member_ids
 
 
@@ -104,7 +110,10 @@ async def test_task_assignees_and_reminders_follow_the_aggregate(
     project = await project_with_users(session_maker, members=1)
     member = next(iter(project.member_ids - {project.owner_id}))
     task = Task.create(
-        project_id=project.id, title=TaskTitle("Pack"), due_at=NOW + timedelta(days=5)
+        project_id=project.id,
+        title=TaskTitle("Pack"),
+        phase=TaskPhase.DURING,
+        due_at=NOW + timedelta(days=5),
     )
     task.assign(member)
     task.add_reminder(ReminderOffset(24))
@@ -115,6 +124,7 @@ async def test_task_assignees_and_reminders_follow_the_aggregate(
     task.remove_reminder(ReminderOffset(24))
     task.add_reminder(ReminderOffset(2))
     task.complete(now=NOW)
+    task.move_to_phase(TaskPhase.AFTER)
     await merge(session_maker, TaskMapper.to_model(task))
 
     stored = TaskMapper.to_domain(await load(session_maker, TaskModel, task.id))
@@ -132,6 +142,8 @@ async def test_inventory_notifications_and_audit(session_maker: SessionMaker) ->
         destination=destination,
         created_by=project.owner_id,
         now=NOW,
+        title=BoxTitle("Dishes"),
+        is_fragile=True,
     )
     item = Item.create(project_id=project.id, source=room, name=ItemName("Kettle"))
     item.put_into(box)

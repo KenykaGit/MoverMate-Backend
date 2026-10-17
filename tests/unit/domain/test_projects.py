@@ -1,10 +1,12 @@
 import pytest
 
 from app.domain.common.ids import UserId, new_id
+from app.domain.common.reminders import MovingReminderOffset
 from app.domain.projects.errors import (
     CannotRemoveOwnerError,
     InvalidAddressError,
     InvalidProjectNameError,
+    NotProjectOwnerError,
 )
 from app.domain.projects.value_objects import (
     ADDRESS_MAX_LENGTH,
@@ -85,10 +87,34 @@ class TestQrAccess:
         assert project.qr_access(viewers[viewer]) is expected
 
 
-def test_soft_delete_is_idempotent() -> None:
+class TestDeletion:
+    def test_by_the_owner_is_idempotent(self) -> None:
+        project = make_project()
+
+        project.soft_delete(by=project.owner_id)
+        project.soft_delete(by=project.owner_id)
+
+        assert not project.is_active
+
+    def test_other_members_cannot_delete(self) -> None:
+        project = make_project()
+        member = UserId(new_id())
+        project.add_member(member)
+
+        with pytest.raises(NotProjectOwnerError):
+            project.soft_delete(by=member)
+        assert project.is_active
+
+
+def test_moving_reminders_report_changes() -> None:
     project = make_project()
+    week = MovingReminderOffset(7)
+    assert project.moving_reminders == set()
 
-    project.soft_delete()
-    project.soft_delete()
+    assert project.add_moving_reminder(week)
+    assert not project.add_moving_reminder(week)
+    assert project.add_moving_reminder(MovingReminderOffset(1))
+    assert project.remove_moving_reminder(week)
+    assert not project.remove_moving_reminder(week)
 
-    assert not project.is_active
+    assert project.moving_reminders == {MovingReminderOffset(1)}

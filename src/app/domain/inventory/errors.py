@@ -9,6 +9,10 @@ class InvalidBoxNumberError(DomainError):
     """Box numbers are positive integers."""
 
 
+class InvalidBoxTitleError(DomainError):
+    """The box title does not satisfy domain rules."""
+
+
 class InvalidQrTokenError(DomainError):
     """The string cannot be a QR token of a box."""
 

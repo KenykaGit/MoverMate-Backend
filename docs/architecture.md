@@ -129,10 +129,12 @@ client ──HTTPS──▶ nginx :443 ──▶ api (uvicorn, FastAPI) ──�
 Схема создаётся миграцией [0001](../migrations/versions/0001_initial.py); [0002](../migrations/versions/0002_drop_user_email.py) убирает `users.email`;
 [0003](../migrations/versions/0003_add_users_updated_at.py) добавляет служебный `users.updated_at`
 (ставят БД и ORM, домен его не хранит); [0004](../migrations/versions/0004_moving_domain_tables.py)
-создаёт таблицы домена переезда. Полный список ограничений — в
+создаёт таблицы домена переезда; [0005](../migrations/versions/0005_task_phase_box_title_and_fragility_.py)
+добавляет этап задачи, описание и «хрупкое» у коробки и напоминания о дате переезда (сверка
+с фронтендом). Полный список ограничений — в
 [db-design.md](db-design.md#11-индексы-и-ограничения). ORM ↔ домен переводят мапперы
-`infrastructure/db/mappers/`; дочерние строки агрегата (участники проекта, ответственные и
-напоминания задачи) — связи `relationship(cascade="all, delete-orphan", lazy="selectin")`
+`infrastructure/db/mappers/`; дочерние строки агрегата (участники и напоминания проекта,
+ответственные и напоминания задачи) — связи `relationship(cascade="all, delete-orphan", lazy="selectin")`
 внутри агрегата, так что `merge()` корня синхронизирует их. Связей между агрегатами в моделях
 нет, только внешние ключи.
 
@@ -140,9 +142,9 @@ client ──HTTPS──▶ nginx :443 ──▶ api (uvicorn, FastAPI) ──�
 |---|---|
 | `users` | частичный уникальный индекс `uq_users_username_active` `WHERE is_active`; CHECK `username = lower(username)` |
 | `refresh_tokens` | хранится только `token_hash` (SHA-256, CHECK длины 64, UNIQUE); `family_id` (сессия, индекс); `revoked_at`; FK на `users` с `ON DELETE CASCADE` |
-| `projects`, `project_collaborators` | CHECK `qr_code_strategy`; PK участника `(project_id, user_id)` |
+| `projects`, `project_collaborators`, `project_reminders` | CHECK `qr_code_strategy`; PK участника `(project_id, user_id)`; CHECK `offset_days BETWEEN 1 AND 365` |
 | `rooms`, `boxes`, `items` | составные FK `(project_id, …)` не дают сослаться на объект другого проекта; частичные UNIQUE номера коробки и имени комнаты `WHERE is_active`; CHECK `(state = 'IN_BOX') = (box_id IS NOT NULL)`; триггеры переходов статуса коробки и состояния вещи; GIN FTS по `items.name` |
-| `tasks`, `task_collaborators`, `task_reminders` | CHECK `is_done = (done_at IS NOT NULL)`; ответственный — составной FK на `project_collaborators` с `ON DELETE CASCADE`; CHECK `offset_hours BETWEEN 1 AND 8760` |
+| `tasks`, `task_collaborators`, `task_reminders` | CHECK `is_done = (done_at IS NOT NULL)`; CHECK `phase`; ответственный — составной FK на `project_collaborators` с `ON DELETE CASCADE`; CHECK `offset_hours BETWEEN 1 AND 8760` |
 | `notifications`, `push_subscriptions` | CHECK «тип ⇔ заполненные поля»; триггер «статус меняется только из `PENDING`»; частичные UNIQUE ожидающих напоминаний; UNIQUE `endpoint` |
 | `audit_logs` | без FK на `entity_id` и `actor_id`; CHECK `entity_type = split_part(action, '_', 1)` |
 

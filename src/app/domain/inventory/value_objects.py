@@ -9,6 +9,7 @@ from typing import Self
 from app.domain.common.text import bounded_text
 from app.domain.inventory.errors import (
     InvalidBoxNumberError,
+    InvalidBoxTitleError,
     InvalidItemNameError,
     InvalidQrTokenError,
     InvalidQuantityError,
@@ -16,6 +17,7 @@ from app.domain.inventory.errors import (
 )
 
 ROOM_NAME_MAX_LENGTH = 100
+BOX_TITLE_MAX_LENGTH = 200
 ITEM_NAME_MAX_LENGTH = 200
 QUANTITY_MAX = 10_000
 
@@ -60,6 +62,23 @@ class BoxNumber:
 
     def __str__(self) -> str:
         return str(self.value)
+
+
+@dataclass(frozen=True, slots=True)
+class BoxTitle:
+    value: str
+
+    def __post_init__(self) -> None:
+        normalized = bounded_text(
+            self.value,
+            max_length=BOX_TITLE_MAX_LENGTH,
+            what="Box title",
+            error=InvalidBoxTitleError,
+        )
+        object.__setattr__(self, "value", normalized)
+
+    def __str__(self) -> str:
+        return self.value
 
 
 @dataclass(frozen=True, slots=True)

@@ -4,7 +4,8 @@ from typing import Self
 
 from app.domain.common.entity import Entity
 from app.domain.common.ids import ProjectId, UserId, new_id
-from app.domain.projects.errors import CannotRemoveOwnerError
+from app.domain.common.reminders import MovingReminderOffset
+from app.domain.projects.errors import CannotRemoveOwnerError, NotProjectOwnerError
 from app.domain.projects.value_objects import Address, ProjectName, QrAccess, QrCodeStrategy
 
 
@@ -24,6 +25,8 @@ class Project(Entity[ProjectId]):
     qr_code_strategy: QrCodeStrategy
     member_ids: set[UserId]
     """Always contains owner_id."""
+    moving_reminders: set[MovingReminderOffset]
+    """How many days before the moving date every member is reminded."""
     is_active: bool
     """Soft-delete flag: False hides the project with everything in it."""
 
@@ -48,6 +51,7 @@ class Project(Entity[ProjectId]):
             destination_address=destination_address,
             qr_code_strategy=qr_code_strategy,
             member_ids={owner_id},
+            moving_reminders=set(),
             is_active=True,
         )
 
@@ -87,6 +91,22 @@ class Project(Entity[ProjectId]):
         """Applies to labels already printed: access is decided when a code is opened."""
         self.qr_code_strategy = strategy
 
-    def soft_delete(self) -> None:
-        """Idempotent."""
+    def add_moving_reminder(self, offset: MovingReminderOffset) -> bool:
+        """False if the project already had this reminder."""
+        if offset in self.moving_reminders:
+            return False
+        self.moving_reminders.add(offset)
+        return True
+
+    def remove_moving_reminder(self, offset: MovingReminderOffset) -> bool:
+        """False if the project had no such reminder."""
+        if offset not in self.moving_reminders:
+            return False
+        self.moving_reminders.remove(offset)
+        return True
+
+    def soft_delete(self, *, by: UserId) -> None:
+        """Idempotent. Only the owner deletes a project; other members may only leave it."""
+        if by != self.owner_id:
+            raise NotProjectOwnerError("Only the owner can delete the project")
         self.is_active = False

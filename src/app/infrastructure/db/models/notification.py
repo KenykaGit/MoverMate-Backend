@@ -11,7 +11,8 @@ from app.infrastructure.db.constraints import ENUM_LENGTH, one_of
 # Raised by the trigger that mirrors NOTIFICATION_TRANSITIONS (see migration 0004).
 NOTIFICATION_STATUS_TRANSITION_CONSTRAINT = "ck_notifications_status_transition"
 
-_TASK = f"('{NotificationType.TASK_ASSIGNED}', '{NotificationType.TASK_REMINDER}')"
+_T = NotificationType
+_TASK = f"('{_T.TASK_ASSIGNED}', '{_T.TASK_REMINDER}')"
 
 
 class NotificationModel(Base):
@@ -21,14 +22,18 @@ class NotificationModel(Base):
     __table_args__ = (
         # The type decides which target columns are set (a sum type in the domain).
         CheckConstraint(
-            f"(type = '{NotificationType.BOX_CONTENTS_REMINDER}'"
-            " AND box_id IS NOT NULL AND task_id IS NULL)"
-            f" OR (type IN {_TASK} AND task_id IS NOT NULL AND box_id IS NULL)",
+            f"(type = '{_T.BOX_CONTENTS_REMINDER}' AND box_id IS NOT NULL AND task_id IS NULL)"
+            f" OR (type IN {_TASK} AND task_id IS NOT NULL AND box_id IS NULL)"
+            f" OR (type = '{_T.MOVING_DATE_REMINDER}' AND task_id IS NULL AND box_id IS NULL)",
             name="target_matches_type",
         ),
         CheckConstraint(
-            f"(reminder_offset_hours IS NOT NULL) = (type = '{NotificationType.TASK_REMINDER}')",
+            f"(reminder_offset_hours IS NOT NULL) = (type = '{_T.TASK_REMINDER}')",
             name="offset_iff_task_reminder",
+        ),
+        CheckConstraint(
+            f"(reminder_offset_days IS NOT NULL) = (type = '{_T.MOVING_DATE_REMINDER}')",
+            name="offset_days_iff_moving_date_reminder",
         ),
         CheckConstraint(one_of("type", NotificationType), name="type"),
         CheckConstraint(one_of("status", NotificationStatus), name="status"),
@@ -55,6 +60,17 @@ class NotificationModel(Base):
             ),
         ),
         Index(
+            "uq_notifications_moving_date_pending",
+            "project_id",
+            "user_id",
+            "reminder_offset_days",
+            unique=True,
+            postgresql_where=text(
+                "(((type)::text = 'MOVING_DATE_REMINDER'::text)"
+                " AND ((status)::text = 'PENDING'::text))"
+            ),
+        ),
+        Index(
             "ix_notifications_scheduled_at_pending",
             "scheduled_at",
             postgresql_where=text("((status)::text = 'PENDING'::text)"),
@@ -75,6 +91,7 @@ class NotificationModel(Base):
     task_id: Mapped[UUID | None] = mapped_column(ForeignKey("tasks.id"))
     box_id: Mapped[UUID | None] = mapped_column(ForeignKey("boxes.id"))
     reminder_offset_hours: Mapped[int | None]
+    reminder_offset_days: Mapped[int | None]
     scheduled_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     status: Mapped[str] = mapped_column(String(ENUM_LENGTH))
     attempts: Mapped[int]

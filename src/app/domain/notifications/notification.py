@@ -6,7 +6,7 @@ from uuid import UUID
 
 from app.domain.common.entity import Entity
 from app.domain.common.ids import BoxId, ProjectId, TaskId, UserId, new_id
-from app.domain.common.reminders import ReminderOffset
+from app.domain.common.reminders import MovingReminderOffset, ReminderOffset
 from app.domain.notifications.errors import NotificationAlreadyFinishedError
 
 NotificationId = NewType("NotificationId", UUID)
@@ -20,6 +20,7 @@ class NotificationType(StrEnum):
     TASK_ASSIGNED = "TASK_ASSIGNED"
     TASK_REMINDER = "TASK_REMINDER"
     BOX_CONTENTS_REMINDER = "BOX_CONTENTS_REMINDER"
+    MOVING_DATE_REMINDER = "MOVING_DATE_REMINDER"
 
 
 @dataclass(frozen=True, slots=True)
@@ -38,14 +39,22 @@ class BoxContentsReminder:
     box_id: BoxId
 
 
-type NotificationTarget = TaskAssigned | TaskReminder | BoxContentsReminder
+@dataclass(frozen=True, slots=True)
+class MovingDateReminder:
+    """About the project itself: its moving date is near."""
+
+    offset: MovingReminderOffset
+
+
+type NotificationTarget = TaskAssigned | TaskReminder | BoxContentsReminder | MovingDateReminder
 """What a notification is about. One type per target, so the database rule
-"the type decides which of task_id, box_id, offset are set" holds by construction."""
+"the type decides which of task_id, box_id and the offsets are set" holds by construction."""
 
 _TYPES: dict[type[NotificationTarget], NotificationType] = {
     TaskAssigned: NotificationType.TASK_ASSIGNED,
     TaskReminder: NotificationType.TASK_REMINDER,
     BoxContentsReminder: NotificationType.BOX_CONTENTS_REMINDER,
+    MovingDateReminder: NotificationType.MOVING_DATE_REMINDER,
 }
 
 

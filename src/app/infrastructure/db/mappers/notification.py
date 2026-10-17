@@ -1,7 +1,8 @@
 from app.domain.common.ids import BoxId, ProjectId, TaskId, UserId
-from app.domain.common.reminders import ReminderOffset
+from app.domain.common.reminders import MovingReminderOffset, ReminderOffset
 from app.domain.notifications.notification import (
     BoxContentsReminder,
+    MovingDateReminder,
     Notification,
     NotificationId,
     NotificationStatus,
@@ -25,7 +26,7 @@ class InvalidNotificationRowError(Exception):
 
 
 class NotificationMapper:
-    """The domain target (a sum type) is spread over type, task_id, box_id and offset."""
+    """The domain target (a sum type) is spread over type, task_id, box_id and the offsets."""
 
     @staticmethod
     def to_domain(model: NotificationModel) -> Notification:
@@ -46,6 +47,7 @@ class NotificationMapper:
         task_id: TaskId | None = None
         box_id: BoxId | None = None
         offset_hours: int | None = None
+        offset_days: int | None = None
         match notification.target:
             case TaskAssigned(task_id=assigned):
                 task_id = assigned
@@ -53,6 +55,8 @@ class NotificationMapper:
                 task_id, offset_hours = reminded, offset.hours
             case BoxContentsReminder(box_id=box):
                 box_id = box
+            case MovingDateReminder(offset=moving_offset):
+                offset_days = moving_offset.days
         return NotificationModel(
             id=notification.id,
             project_id=notification.project_id,
@@ -61,6 +65,7 @@ class NotificationMapper:
             task_id=task_id,
             box_id=box_id,
             reminder_offset_hours=offset_hours,
+            reminder_offset_days=offset_days,
             scheduled_at=notification.scheduled_at,
             status=notification.status.value,
             attempts=notification.attempts,
@@ -70,13 +75,22 @@ class NotificationMapper:
 
 
 def _target(model: NotificationModel) -> NotificationTarget:
-    match NotificationType(model.type), model.task_id, model.box_id, model.reminder_offset_hours:
-        case NotificationType.TASK_ASSIGNED, task_id, None, None if task_id is not None:
+    columns = (
+        NotificationType(model.type),
+        model.task_id,
+        model.box_id,
+        model.reminder_offset_hours,
+        model.reminder_offset_days,
+    )
+    match columns:
+        case NotificationType.TASK_ASSIGNED, task_id, None, None, None if task_id is not None:
             return TaskAssigned(TaskId(task_id))
-        case NotificationType.TASK_REMINDER, task_id, None, int(hours) if task_id is not None:
+        case NotificationType.TASK_REMINDER, task_id, None, int(hours), None if task_id is not None:
             return TaskReminder(TaskId(task_id), ReminderOffset(hours))
-        case NotificationType.BOX_CONTENTS_REMINDER, None, box_id, None if box_id is not None:
+        case NotificationType.BOX_CONTENTS_REMINDER, None, box_id, None, None if box_id is not None:
             return BoxContentsReminder(BoxId(box_id))
+        case NotificationType.MOVING_DATE_REMINDER, None, None, None, int(days):
+            return MovingDateReminder(MovingReminderOffset(days))
     raise InvalidNotificationRowError(
         f"Notification {model.id} has columns that do not fit {model.type}"
     )

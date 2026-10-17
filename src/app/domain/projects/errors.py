@@ -11,3 +11,7 @@ class InvalidAddressError(DomainError):
 
 class CannotRemoveOwnerError(DomainError):
     """The owner always stays a member of their project."""
+
+
+class NotProjectOwnerError(DomainError):
+    """The action is reserved to the owner of the project."""

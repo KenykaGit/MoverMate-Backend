@@ -26,11 +26,16 @@ from app.application.exceptions import (
     UsernameAlreadyTakenError,
     UserNotFoundError,
 )
-from app.domain.common.errors import DomainError, InvalidReminderOffsetError
+from app.domain.common.errors import (
+    DomainError,
+    InvalidMovingReminderOffsetError,
+    InvalidReminderOffsetError,
+)
 from app.domain.inventory.errors import (
     BoxStatusTransitionError,
     CrossProjectReferenceError,
     InvalidBoxNumberError,
+    InvalidBoxTitleError,
     InvalidItemNameError,
     InvalidQrTokenError,
     InvalidQuantityError,
@@ -46,6 +51,7 @@ from app.domain.projects.errors import (
     CannotRemoveOwnerError,
     InvalidAddressError,
     InvalidProjectNameError,
+    NotProjectOwnerError,
 )
 from app.domain.tasks.errors import (
     InvalidDueDateError,
@@ -87,9 +93,14 @@ ERROR_SPECS: dict[type[Exception], ErrorSpec] = {
         status.HTTP_422_UNPROCESSABLE_CONTENT, "invalid_project_name"
     ),
     InvalidAddressError: ErrorSpec(status.HTTP_422_UNPROCESSABLE_CONTENT, "invalid_address"),
+    InvalidMovingReminderOffsetError: ErrorSpec(
+        status.HTTP_422_UNPROCESSABLE_CONTENT, "invalid_moving_reminder_offset"
+    ),
     CannotRemoveOwnerError: ErrorSpec(status.HTTP_409_CONFLICT, "cannot_remove_owner"),
+    NotProjectOwnerError: ErrorSpec(status.HTTP_403_FORBIDDEN, "not_project_owner"),
     InvalidRoomNameError: ErrorSpec(status.HTTP_422_UNPROCESSABLE_CONTENT, "invalid_room_name"),
     InvalidBoxNumberError: ErrorSpec(status.HTTP_422_UNPROCESSABLE_CONTENT, "invalid_box_number"),
+    InvalidBoxTitleError: ErrorSpec(status.HTTP_422_UNPROCESSABLE_CONTENT, "invalid_box_title"),
     InvalidQrTokenError: ErrorSpec(status.HTTP_422_UNPROCESSABLE_CONTENT, "invalid_qr_token"),
     InvalidItemNameError: ErrorSpec(status.HTTP_422_UNPROCESSABLE_CONTENT, "invalid_item_name"),
     InvalidQuantityError: ErrorSpec(status.HTTP_422_UNPROCESSABLE_CONTENT, "invalid_quantity"),

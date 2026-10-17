@@ -3,7 +3,7 @@ from datetime import timedelta
 import pytest
 
 from app.domain.common.ids import BoxId, ProjectId, TaskId, UserId, new_id
-from app.domain.common.reminders import ReminderOffset
+from app.domain.common.reminders import MovingReminderOffset, ReminderOffset
 from app.domain.notifications.errors import (
     InvalidPushSubscriptionError,
     NotificationAlreadyFinishedError,
@@ -13,6 +13,7 @@ from app.domain.notifications.notification import (
     NOTIFICATION_TRANSITIONS,
     RETRY_BASE_DELAY,
     BoxContentsReminder,
+    MovingDateReminder,
     Notification,
     NotificationStatus,
     NotificationTarget,
@@ -70,6 +71,10 @@ class TestSchedule:
             (TaskAssigned(TaskId(new_id())), NotificationType.TASK_ASSIGNED),
             (TaskReminder(TaskId(new_id()), ReminderOffset(2)), NotificationType.TASK_REMINDER),
             (BoxContentsReminder(BoxId(new_id())), NotificationType.BOX_CONTENTS_REMINDER),
+            (
+                MovingDateReminder(MovingReminderOffset(7)),
+                NotificationType.MOVING_DATE_REMINDER,
+            ),
         ],
     )
     def test_type_follows_the_target(

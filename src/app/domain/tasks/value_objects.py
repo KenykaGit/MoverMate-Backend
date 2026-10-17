@@ -1,6 +1,8 @@
 """Task value objects: immutable, self-validating, normalized on creation."""
 
 from dataclasses import dataclass
+from enum import StrEnum
+from typing import NewType
 
 from app.domain.common.text import bounded_text
 from app.domain.tasks.errors import InvalidTaskDescriptionError, InvalidTaskTitleError
@@ -43,9 +45,25 @@ class TaskDescription:
         return self.value
 
 
+class TaskPhase(StrEnum):
+    """When in the move a task belongs: the plan is shown in these three columns."""
+
+    BEFORE = "BEFORE"
+    DURING = "DURING"
+    """The moving day itself."""
+    AFTER = "AFTER"
+
+
+TaskTemplateId = NewType("TaskTemplateId", str)
+"""Stable key of a template in the templates file: clients select templates by it."""
+
+
 @dataclass(frozen=True, slots=True)
 class TaskTemplate:
-    """A task every new project starts with. No due time and no assignees by design."""
+    """A ready-made task a user may add to their project. No due time and no assignees
+    by design; the copy keeps no link to the template."""
 
+    id: TaskTemplateId
     title: TaskTitle
+    phase: TaskPhase
     description: TaskDescription | None = None

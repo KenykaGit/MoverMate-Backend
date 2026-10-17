@@ -8,10 +8,11 @@ import pytest
 
 from app.domain.audit.entity import AuditAction, AuditEntry
 from app.domain.common.ids import BoxId, ProjectId, TaskId, UserId, new_id
-from app.domain.common.reminders import ReminderOffset
-from app.domain.inventory.value_objects import Priority, Quantity
+from app.domain.common.reminders import MovingReminderOffset, ReminderOffset
+from app.domain.inventory.value_objects import BoxTitle, Priority, Quantity
 from app.domain.notifications.notification import (
     BoxContentsReminder,
+    MovingDateReminder,
     Notification,
     NotificationTarget,
     TaskAssigned,
@@ -19,7 +20,7 @@ from app.domain.notifications.notification import (
 )
 from app.domain.notifications.push_subscription import PushEndpoint, PushKeys, PushSubscription
 from app.domain.projects.value_objects import Address, QrCodeStrategy
-from app.domain.tasks.value_objects import TaskDescription
+from app.domain.tasks.value_objects import TaskDescription, TaskPhase
 from app.infrastructure.db.mappers.audit import AuditEntryMapper
 from app.infrastructure.db.mappers.inventory import BoxMapper, ItemMapper, RoomMapper
 from app.infrastructure.db.mappers.notification import (
@@ -37,15 +38,18 @@ def state(entity: Any) -> dict[str, Any]:
     return {field.name: getattr(entity, field.name) for field in dataclasses.fields(entity)}
 
 
-def test_project_with_members_and_addresses() -> None:
+def test_project_with_members_reminders_and_addresses() -> None:
     project = make_project()
     project.add_member(UserId(new_id()))
+    project.add_moving_reminder(MovingReminderOffset(7))
+    project.add_moving_reminder(MovingReminderOffset(1))
     project.change_addresses(origin=Address("Москва"), destination=None)
     project.change_qr_code_strategy(QrCodeStrategy.OPEN)
 
     model = ProjectMapper.to_model(project)
 
     assert {row.user_id for row in model.collaborators} == project.member_ids
+    assert [row.offset_days for row in model.reminders] == [1, 7]
     assert state(ProjectMapper.to_domain(model)) == state(project)
 
 
@@ -55,8 +59,11 @@ def test_room() -> None:
     assert state(RoomMapper.to_domain(RoomMapper.to_model(room))) == state(room)
 
 
-def test_box() -> None:
+@pytest.mark.parametrize("title", [None, BoxTitle("Dishes")])
+def test_box(title: BoxTitle | None) -> None:
     box = make_box()
+    box.change_title(title)
+    box.set_fragile(True)
 
     model = BoxMapper.to_model(box)
 
@@ -81,6 +88,7 @@ def test_item(packed: bool) -> None:
 def test_task_with_assignees_and_reminders() -> None:
     task = make_task(due_at=NOW + timedelta(days=3))
     task.change_description(TaskDescription("Call two companies"))
+    task.move_to_phase(TaskPhase.DURING)
     task.assign(UserId(new_id()))
     task.add_reminder(ReminderOffset(24))
     task.add_reminder(ReminderOffset(2))
@@ -89,6 +97,7 @@ def test_task_with_assignees_and_reminders() -> None:
     model = TaskMapper.to_model(task)
 
     assert model.is_done
+    assert model.phase == "DURING"
     assert [row.offset_hours for row in model.reminders] == [2, 24]
     assert all(row.project_id == task.project_id for row in model.assignees)
     assert state(TaskMapper.to_domain(model)) == state(task)
@@ -100,6 +109,7 @@ def test_task_with_assignees_and_reminders() -> None:
         TaskAssigned(TaskId(new_id())),
         TaskReminder(TaskId(new_id()), ReminderOffset(48)),
         BoxContentsReminder(BoxId(new_id())),
+        MovingDateReminder(MovingReminderOffset(3)),
     ],
 )
 def test_notification(target: NotificationTarget) -> None:

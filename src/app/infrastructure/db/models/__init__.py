@@ -5,7 +5,11 @@ from app.infrastructure.db.models.audit_log import AuditLogModel
 from app.infrastructure.db.models.box import BoxModel
 from app.infrastructure.db.models.item import ItemModel
 from app.infrastructure.db.models.notification import NotificationModel
-from app.infrastructure.db.models.project import ProjectCollaboratorModel, ProjectModel
+from app.infrastructure.db.models.project import (
+    ProjectCollaboratorModel,
+    ProjectModel,
+    ProjectReminderModel,
+)
 from app.infrastructure.db.models.push_subscription import PushSubscriptionModel
 from app.infrastructure.db.models.refresh_token import RefreshTokenModel
 from app.infrastructure.db.models.room import RoomModel
@@ -20,6 +24,7 @@ __all__ = [
     "NotificationModel",
     "ProjectCollaboratorModel",
     "ProjectModel",
+    "ProjectReminderModel",
     "PushSubscriptionModel",
     "RefreshTokenModel",
     "RoomModel",
