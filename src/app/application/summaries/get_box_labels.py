@@ -1,5 +1,5 @@
+from app.application.common.membership import project_of_member
 from app.application.interfaces.project_repository import AbstractProjectRepository
-from app.application.inventory.lookup import project_of_member
 from app.application.summaries.dto import BoxLabelDTO, GetBoxLabelsDTO
 from app.application.summaries.read_model import AbstractSummaryReadModel
 from app.domain.common.ids import BoxId

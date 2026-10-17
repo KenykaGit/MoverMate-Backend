@@ -16,6 +16,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.application.exceptions import (
     ApplicationError,
+    AssigneeNotCollaboratorError,
     BoxNotFoundError,
     BoxNotPackingError,
     BoxStatusConflictError,
@@ -38,6 +39,8 @@ from app.application.exceptions import (
     RoomInUseError,
     RoomNameTakenError,
     RoomNotFoundError,
+    TaskNotFoundError,
+    UnknownTaskTemplateError,
     UnsupportedPhotoTypeError,
     UsernameAlreadyTakenError,
     UserNotFoundError,
@@ -149,6 +152,13 @@ ERROR_SPECS: dict[type[Exception], ErrorSpec] = {
     RoomNotFoundError: ErrorSpec(status.HTTP_404_NOT_FOUND, "room_not_found"),
     BoxNotFoundError: ErrorSpec(status.HTTP_404_NOT_FOUND, "box_not_found"),
     ItemNotFoundError: ErrorSpec(status.HTTP_404_NOT_FOUND, "item_not_found"),
+    TaskNotFoundError: ErrorSpec(status.HTTP_404_NOT_FOUND, "task_not_found"),
+    AssigneeNotCollaboratorError: ErrorSpec(
+        status.HTTP_422_UNPROCESSABLE_CONTENT, "assignee_not_collaborator"
+    ),
+    UnknownTaskTemplateError: ErrorSpec(
+        status.HTTP_422_UNPROCESSABLE_CONTENT, "unknown_task_template"
+    ),
     RoomInUseError: ErrorSpec(status.HTTP_409_CONFLICT, "room_in_use"),
     BoxStatusConflictError: ErrorSpec(status.HTTP_409_CONFLICT, "box_status_conflict"),
     NotBoxCreatorError: ErrorSpec(status.HTTP_403_FORBIDDEN, "not_box_creator"),

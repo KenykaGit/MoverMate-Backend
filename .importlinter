@@ -55,7 +55,7 @@ modules =
     app.domain.audit
 
 [importlinter:contract:application_modules]
-name = Application features are independent (auth may use users, summaries may use inventory)
+name = Application features are independent (auth may use users, summaries may use inventory and tasks)
 type = independence
 modules =
     app.application.users
@@ -65,9 +65,11 @@ modules =
     app.application.summaries
     app.application.notifications
     app.application.inventory
+    app.application.tasks
 ignore_imports =
     app.application.auth.** -> app.application.users.**
     app.application.summaries.** -> app.application.inventory.**
+    app.application.summaries.** -> app.application.tasks.**
 
 [importlinter:contract:presentation_adapters]
 name = Presentation reaches storage and security only through application ports

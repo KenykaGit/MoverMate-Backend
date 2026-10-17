@@ -107,6 +107,12 @@ SQLAlchemy) проходят через один конвейер. Каждая 
 | `items_scanned` | info | `project_id`, `recognized`, `items` | фото распознано: модель назвала `recognized` позиций, после проверки и объединения осталось `items` |
 | `llm_request_completed` | info | `operation`, `model`, `duration_seconds`, `prompt_tokens`, `completion_tokens`, `items` | успешный вызов модели; токены — для контроля расхода квоты прокси |
 | **`llm_request_failed`** | **warning** | `operation`, `model`, `outcome`, `http_status`, `error`, `duration_seconds` | вызов модели не удался, клиент получил 503 `item_recognition_unavailable`; `outcome` — как в `llm_requests_total`, `error` — начало ответа прокси (до 300 символов) |
+| `task_created` | info | `project_id`, `task_id`, `assignees` | новая задача и число её ответственных |
+| `tasks_created_from_templates` | info | `project_id`, `template_ids` | выбранные шаблоны скопированы в задачи (повтор `id` в запросе копируется один раз) |
+| `task_completed`, `task_reopened` | info | `project_id`, `task_id` | задача выполнена (ожидающие уведомления отменены) / возвращена в работу (напоминания поставлены заново); повтор не пишется |
+| `task_assignees_changed` | info | `task_id`, `added`, `removed` | заменены ответственные; снятые потеряли ожидающие уведомления по задаче |
+| `task_reminders_changed` | info | `task_id`, `offsets_hours` | новый набор напоминаний задачи (повтор того же набора не пишется) |
+| `task_deleted` | info | `project_id`, `task_id`, `user_id` | задача удалена, её ожидающие уведомления отменены |
 | `redis_unavailable` | warning | `op`, `error` | операция Redis не удалась, сработал fail-open |
 | `readiness_check_failed` | warning | `dependency`, `error` | зависимость не прошла проверку `/health/ready` |
 | `idempotency_record_corrupted` | warning | ключ | запись в Redis не читается (например, после смены формата) |

@@ -17,13 +17,16 @@ from app.application.interfaces.push_subscription_repository import (
 )
 from app.application.interfaces.refresh_token_repository import AbstractRefreshTokenRepository
 from app.application.interfaces.room_repository import AbstractRoomRepository
+from app.application.interfaces.task_repository import AbstractTaskRepository
 from app.application.interfaces.user_repository import AbstractUserRepository
 from app.application.inventory.read_model import AbstractInventoryReadModel
 from app.application.summaries.read_model import AbstractSummaryReadModel
+from app.application.tasks.read_model import AbstractTaskReadModel
 from app.config import DatabaseSettings, WorkerSettings
 from app.infrastructure.db.health import DatabaseHealthProbe, NotificationLagProbe
 from app.infrastructure.db.queries.inventory import SqlAlchemyInventoryReadModel
 from app.infrastructure.db.queries.summaries import SqlAlchemySummaryReadModel
+from app.infrastructure.db.queries.tasks import SqlAlchemyTaskReadModel
 from app.infrastructure.db.repositories.audit_log import SqlAlchemyAuditLogRepository
 from app.infrastructure.db.repositories.box import SqlAlchemyBoxRepository
 from app.infrastructure.db.repositories.item import SqlAlchemyItemRepository
@@ -38,6 +41,7 @@ from app.infrastructure.db.repositories.push_subscription import (
 )
 from app.infrastructure.db.repositories.refresh_token import SqlAlchemyRefreshTokenRepository
 from app.infrastructure.db.repositories.room import SqlAlchemyRoomRepository
+from app.infrastructure.db.repositories.task import SqlAlchemyTaskRepository
 from app.infrastructure.db.repositories.user import SqlAlchemyUserRepository
 from app.infrastructure.db.session import create_engine, create_session_maker
 from app.infrastructure.db.uow import SqlAlchemyUnitOfWork
@@ -102,6 +106,12 @@ class DatabaseProvider(Provider):
     )
     summary_read_model = provide(
         SqlAlchemySummaryReadModel, scope=Scope.REQUEST, provides=AbstractSummaryReadModel
+    )
+    task_repository = provide(
+        SqlAlchemyTaskRepository, scope=Scope.REQUEST, provides=AbstractTaskRepository
+    )
+    task_read_model = provide(
+        SqlAlchemyTaskReadModel, scope=Scope.REQUEST, provides=AbstractTaskReadModel
     )
     notification_repository = provide(
         SqlAlchemyNotificationRepository,

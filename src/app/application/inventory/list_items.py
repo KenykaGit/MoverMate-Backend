@@ -1,7 +1,7 @@
+from app.application.common.membership import project_of_member
 from app.application.common.pagination import CursorPage
 from app.application.interfaces.project_repository import AbstractProjectRepository
 from app.application.inventory.dto import ItemDTO, ListItemsDTO
-from app.application.inventory.lookup import project_of_member
 from app.application.inventory.read_model import AbstractInventoryReadModel
 from app.domain.common.ids import BoxId, RoomId
 

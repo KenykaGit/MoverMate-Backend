@@ -47,6 +47,18 @@ from app.application.summaries.get_box_labels import GetBoxLabels
 from app.application.summaries.get_loading_checklist import GetLoadingChecklist
 from app.application.summaries.get_project_summary import GetProjectSummary
 from app.application.summaries.get_unpacking_progress import GetUnpackingProgress
+from app.application.tasks.complete_task import CompleteTask
+from app.application.tasks.create_task import CreateTask
+from app.application.tasks.create_tasks_from_templates import CreateTasksFromTemplates
+from app.application.tasks.delete_task import DeleteTask
+from app.application.tasks.get_task import GetTask
+from app.application.tasks.list_task_templates import ListTaskTemplates
+from app.application.tasks.list_tasks import ListTasks
+from app.application.tasks.reopen_task import ReopenTask
+from app.application.tasks.services import TaskNotifier
+from app.application.tasks.set_task_assignees import SetTaskAssignees
+from app.application.tasks.set_task_reminders import SetTaskReminders
+from app.application.tasks.update_task import UpdateTask
 from app.application.users.change_password import ChangePassword
 from app.application.users.change_username import ChangeUsername
 from app.application.users.get_user import GetUser
@@ -62,7 +74,11 @@ class UseCaseProvider(Provider):
     scope = Scope.REQUEST
 
     services = provide_all(
-        CredentialsVerifier, TokenPairIssuer, IdempotentExecutor, MovingReminderScheduler
+        CredentialsVerifier,
+        TokenPairIssuer,
+        IdempotentExecutor,
+        MovingReminderScheduler,
+        TaskNotifier,
     )
 
     users = provide_all(
@@ -90,6 +106,19 @@ class UseCaseProvider(Provider):
     )
     notifications = provide_all(
         DeliverNextNotification, GetVapidPublicKey, SubscribeToPush, UnsubscribeFromPush
+    )
+    tasks = provide_all(
+        ListTaskTemplates,
+        CreateTasksFromTemplates,
+        ListTasks,
+        CreateTask,
+        GetTask,
+        UpdateTask,
+        CompleteTask,
+        ReopenTask,
+        SetTaskAssignees,
+        SetTaskReminders,
+        DeleteTask,
     )
     inventory = provide_all(
         ListRooms,

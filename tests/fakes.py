@@ -15,12 +15,14 @@ from uuid import UUID
 from app.application.common.pagination import CursorPage, CursorPageRequest
 from app.application.common.uow import AbstractUnitOfWork
 from app.application.exceptions import (
+    AssigneeNotCollaboratorError,
     BoxNotFoundError,
     BoxStatusConflictError,
     ItemNotFoundError,
     ProjectNotFoundError,
     RoomNameTakenError,
     RoomNotFoundError,
+    TaskNotFoundError,
     UsernameAlreadyTakenError,
     UserNotFoundError,
 )
@@ -67,6 +69,8 @@ from app.application.interfaces.push_subscription_repository import (
 from app.application.interfaces.rate_limiter import AbstractRateLimiter, RateLimitDecision
 from app.application.interfaces.refresh_token_repository import AbstractRefreshTokenRepository
 from app.application.interfaces.room_repository import AbstractRoomRepository
+from app.application.interfaces.task_repository import AbstractTaskRepository
+from app.application.interfaces.task_templates import AbstractTaskTemplateCatalog
 from app.application.interfaces.tokens import (
     AbstractAccessTokenService,
     AbstractRefreshTokenGenerator,
@@ -93,9 +97,11 @@ from app.application.summaries.dto import (
     UnpackingProgressRoomDTO,
 )
 from app.application.summaries.read_model import AbstractSummaryReadModel
+from app.application.tasks.dto import TaskDTO
+from app.application.tasks.read_model import AbstractTaskReadModel
 from app.domain.audit.entity import AuditAction, AuditEntry
-from app.domain.common.ids import BoxId, ItemId, ProjectId, RoomId, UserId
-from app.domain.common.reminders import MovingReminderOffset
+from app.domain.common.ids import BoxId, ItemId, ProjectId, RoomId, TaskId, UserId
+from app.domain.common.reminders import MovingReminderOffset, ReminderOffset
 from app.domain.inventory.box import Box, BoxStatus
 from app.domain.inventory.item import Item, ItemState
 from app.domain.inventory.room import Room
@@ -104,6 +110,8 @@ from app.domain.notifications.notification import (
     BoxContentsReminder,
     MovingDateReminder,
     Notification,
+    TaskAssigned,
+    TaskReminder,
 )
 from app.domain.notifications.push_subscription import (
     PushEndpoint,
@@ -111,7 +119,8 @@ from app.domain.notifications.push_subscription import (
     PushSubscriptionId,
 )
 from app.domain.projects.entity import Project
-from app.domain.tasks.value_objects import TaskPhase
+from app.domain.tasks.entity import Task
+from app.domain.tasks.value_objects import TaskPhase, TaskTemplate
 from app.domain.tokens.entity import RefreshToken, RefreshTokenId, TokenFamilyId
 from app.domain.users.entity import User
 from app.domain.users.value_objects import PasswordHash, RawPassword, Username
@@ -613,6 +622,25 @@ class InMemoryNotificationRepository(AbstractNotificationRepository):
             )
         )
 
+    async def cancel_pending_for_task(
+        self, task_id: TaskId, *, user_id: UserId | None = None
+    ) -> int:
+        return self._cancel(
+            lambda n: _task_of(n) == task_id and (user_id is None or n.user_id == user_id)
+        )
+
+    async def cancel_pending_task_reminders(
+        self, task_id: TaskId, *, offsets: Iterable[ReminderOffset] | None = None
+    ) -> int:
+        wanted = None if offsets is None else set(offsets)
+        return self._cancel(
+            lambda n: (
+                isinstance(n.target, TaskReminder)
+                and n.target.task_id == task_id
+                and (wanted is None or n.target.offset in wanted)
+            )
+        )
+
     async def cancel_pending_for_box(self, box_id: BoxId) -> int:
         return self._cancel(lambda n: _box_of(n) == box_id)
 
@@ -626,6 +654,102 @@ class InMemoryNotificationRepository(AbstractNotificationRepository):
 def _box_of(notification: Notification) -> BoxId | None:
     target = notification.target
     return target.box_id if isinstance(target, BoxContentsReminder) else None
+
+
+def _task_of(notification: Notification) -> TaskId | None:
+    target = notification.target
+    return target.task_id if isinstance(target, TaskAssigned | TaskReminder) else None
+
+
+class InMemoryTaskRepository(AbstractTaskRepository):
+    """`tasks` holds every task, soft-deleted ones included.
+
+    Like the composite foreign key of the database, it rejects an assignee who is
+    not a member of the task's project (`projects` is the membership it checks).
+    """
+
+    def __init__(self, projects: InMemoryProjectRepository) -> None:
+        self.tasks: dict[TaskId, Task] = {}
+        self.locks = 0
+        self._projects = projects
+
+    async def add(self, task: Task) -> None:
+        self._store(task)
+
+    async def get_by_id(self, task_id: TaskId, *, for_update: bool = False) -> Task | None:
+        task = self.tasks.get(task_id)
+        if task is None or not task.is_active:
+            return None
+        self.locks += for_update
+        return copy.deepcopy(task)
+
+    async def update(self, task: Task) -> None:
+        if task.id not in self.tasks:
+            raise TaskNotFoundError(task.id)
+        self._store(task)
+
+    def _store(self, task: Task) -> None:
+        project = self._projects.projects[task.project_id]
+        if not all(project.is_member(user_id) for user_id in task.assignee_ids):
+            raise AssigneeNotCollaboratorError
+        self.tasks[task.id] = copy.deepcopy(task)
+
+
+class FakeTaskReadModel(AbstractTaskReadModel):
+    """Builds the views from the repository fakes, like the SQL queries do."""
+
+    def __init__(self, tasks: InMemoryTaskRepository, users: InMemoryUserRepository) -> None:
+        self._tasks = tasks
+        self._users = users
+
+    async def project_tasks(
+        self, project_id: ProjectId, *, phase: TaskPhase | None, is_done: bool | None
+    ) -> list[TaskDTO]:
+        phases = list(TaskPhase)
+        found = [
+            task
+            for task in self._tasks.tasks.values()
+            if task.is_active
+            and task.project_id == project_id
+            and (phase is None or task.phase is phase)
+            and (is_done is None or task.is_done is is_done)
+        ]
+        found.sort(
+            key=lambda t: (phases.index(t.phase), t.due_at is None, t.due_at or _FAKE_EPOCH, t.id)
+        )
+        return [self._dto(task) for task in found]
+
+    async def get_many(self, task_ids: Sequence[TaskId]) -> list[TaskDTO]:
+        found = [self._tasks.tasks.get(task_id) for task_id in task_ids]
+        return [self._dto(task) for task in found if task is not None and task.is_active]
+
+    def _dto(self, task: Task) -> TaskDTO:
+        users = [self._users.users[user_id] for user_id in task.assignee_ids]
+        return TaskDTO(
+            id=task.id,
+            title=task.title.value,
+            description=None if task.description is None else task.description.value,
+            phase=task.phase,
+            due_at=task.due_at,
+            is_done=task.is_done,
+            done_at=task.done_at,
+            assignees=tuple(
+                UserRefDTO(id=user.id, username=user.username.value)
+                for user in sorted(users, key=lambda u: u.username.value)
+                if user.is_active
+            ),
+            reminder_offsets_hours=tuple(sorted(offset.hours for offset in task.reminders)),
+            created_at=_FAKE_EPOCH,
+            updated_at=_FAKE_EPOCH,
+        )
+
+
+class FakeTaskTemplateCatalog(AbstractTaskTemplateCatalog):
+    def __init__(self, templates: Iterable[TaskTemplate]) -> None:
+        self.templates = tuple(templates)
+
+    def all(self) -> Sequence[TaskTemplate]:
+        return self.templates
 
 
 class InMemoryAuditLogRepository(AbstractAuditLogRepository):

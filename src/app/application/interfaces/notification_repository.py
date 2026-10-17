@@ -2,8 +2,8 @@ from abc import ABC, abstractmethod
 from collections.abc import Iterable
 from datetime import datetime
 
-from app.domain.common.ids import BoxId, ProjectId, UserId
-from app.domain.common.reminders import MovingReminderOffset
+from app.domain.common.ids import BoxId, ProjectId, TaskId, UserId
+from app.domain.common.reminders import MovingReminderOffset, ReminderOffset
 from app.domain.notifications.notification import Notification
 
 
@@ -45,6 +45,25 @@ class AbstractNotificationRepository(ABC):
         self, project_id: ProjectId, *, offsets: Iterable[MovingReminderOffset] | None = None
     ) -> int:
         """Cancel pending moving date reminders of the project (only of `offsets` if given).
+
+        Returns how many were cancelled.
+        """
+
+    @abstractmethod
+    async def cancel_pending_for_task(
+        self, task_id: TaskId, *, user_id: UserId | None = None
+    ) -> int:
+        """Cancel pending notifications about the task, of every kind (only those of
+        `user_id` if given).
+
+        Returns how many were cancelled.
+        """
+
+    @abstractmethod
+    async def cancel_pending_task_reminders(
+        self, task_id: TaskId, *, offsets: Iterable[ReminderOffset] | None = None
+    ) -> int:
+        """Cancel pending reminders of the task (only of `offsets` if given).
 
         Returns how many were cancelled.
         """

@@ -1,9 +1,9 @@
 import re
 
+from app.application.common.membership import project_of_member
 from app.application.common.pagination import PageRequest
 from app.application.interfaces.project_repository import AbstractProjectRepository
 from app.application.inventory.dto import ItemSearchDTO, SearchItemsDTO
-from app.application.inventory.lookup import project_of_member
 from app.application.inventory.read_model import AbstractInventoryReadModel
 
 # Only word characters reach the search: no operator of the query language can.

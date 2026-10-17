@@ -3,20 +3,20 @@ from collections.abc import Collection
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import Row, case, func, literal, select, union_all
+from sqlalchemy import Row, func, literal, select, union_all
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
-from app.application.inventory.dto import BoxRefDTO, RoomRefDTO, UserRefDTO
+from app.application.inventory.dto import BoxRefDTO, RoomRefDTO
 from app.application.summaries.dto import (
     BoxLabelDTO,
     DoneCountDTO,
     LoadingChecklistRoomDTO,
     ProjectSummaryDTO,
-    TaskDTO,
     UnpackingProgressRoomDTO,
 )
 from app.application.summaries.read_model import AbstractSummaryReadModel
+from app.application.tasks.dto import TaskDTO
 from app.domain.common.ids import BoxId, ProjectId
 from app.domain.inventory.box import BoxStatus
 from app.domain.inventory.item import ItemState
@@ -25,8 +25,8 @@ from app.domain.tasks.value_objects import TaskPhase
 from app.infrastructure.db.models.box import BoxModel
 from app.infrastructure.db.models.item import ItemModel
 from app.infrastructure.db.models.room import RoomModel
-from app.infrastructure.db.models.task import TaskCollaboratorModel, TaskModel, TaskReminderModel
-from app.infrastructure.db.models.user import UserModel
+from app.infrastructure.db.models.task import TaskModel
+from app.infrastructure.db.queries.tasks import load_task_views
 
 type _Row = Row[*tuple[Any, ...]]
 
@@ -38,8 +38,6 @@ _DESTINATION = aliased(RoomModel, name="destination_room")
 
 # Packing order, as in the inventory read model: priority, then name.
 _ITEM_ORDER = (_I.priority, func.lower(_I.name), _I.id)
-# Phases in the order of the move, not alphabetical (AFTER < BEFORE < DURING).
-_PHASE_ORDER = case({phase.value: n for n, phase in enumerate(TaskPhase)}, value=_T.phase)
 
 
 class SqlAlchemySummaryReadModel(AbstractSummaryReadModel):
@@ -207,53 +205,10 @@ class SqlAlchemySummaryReadModel(AbstractSummaryReadModel):
         ]
 
     async def _next_task(self, project_id: ProjectId) -> TaskDTO | None:
-        # Columns, not the ORM entity: no stale object of the identity map, and its
-        # selectin relationships are not loaded.
-        task = (
-            await self._session.execute(
-                select(
-                    _T.id,
-                    _T.title,
-                    _T.description,
-                    _T.phase,
-                    _T.due_at,
-                    _T.is_done,
-                    _T.done_at,
-                    _T.created_at,
-                    _T.updated_at,
-                )
-                .where(_T.project_id == project_id, _T.is_active, ~_T.is_done)
-                .order_by(_PHASE_ORDER, _T.due_at.asc().nulls_last(), _T.id)
-                .limit(1)
-            )
-        ).first()
-        if task is None:
-            return None
-        # Like the list of collaborators, deleted accounts are hidden.
-        assignees = await self._session.execute(
-            select(UserModel.id, UserModel.username)
-            .join(TaskCollaboratorModel, TaskCollaboratorModel.user_id == UserModel.id)
-            .where(TaskCollaboratorModel.task_id == task.id, UserModel.is_active)
-            .order_by(UserModel.username)
+        views = await load_task_views(
+            self._session, _T.project_id == project_id, ~_T.is_done, limit=1
         )
-        offsets = await self._session.scalars(
-            select(TaskReminderModel.offset_hours)
-            .where(TaskReminderModel.task_id == task.id)
-            .order_by(TaskReminderModel.offset_hours)
-        )
-        return TaskDTO(
-            id=task.id,
-            title=task.title,
-            description=task.description,
-            phase=TaskPhase(task.phase),
-            due_at=task.due_at,
-            is_done=task.is_done,
-            done_at=task.done_at,
-            assignees=tuple(UserRefDTO(id=user.id, username=user.username) for user in assignees),
-            reminder_offsets_hours=tuple(offsets),
-            created_at=task.created_at,
-            updated_at=task.updated_at,
-        )
+        return views[0] if views else None
 
 
 def _box_ref(row: _Row) -> BoxRefDTO:

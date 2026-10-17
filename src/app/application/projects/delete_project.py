@@ -1,10 +1,10 @@
 import logging
 
+from app.application.common.membership import project_of_member
 from app.application.common.uow import AbstractUnitOfWork
 from app.application.interfaces.notification_repository import AbstractNotificationRepository
 from app.application.interfaces.project_repository import AbstractProjectRepository
 from app.application.projects.dto import ProjectActionDTO
-from app.application.projects.lookup import get_member_project_or_raise
 from app.domain.common.ids import UserId
 from app.domain.projects.errors import NotProjectOwnerError
 
@@ -32,7 +32,7 @@ class DeleteProject:
             ProjectNotFoundError: no such project (also already deleted), or not a member.
             NotProjectOwnerError: a member other than the owner tried.
         """
-        project = await get_member_project_or_raise(
+        project = await project_of_member(
             self._projects, data.project_id, data.user_id, for_update=True
         )
         try:

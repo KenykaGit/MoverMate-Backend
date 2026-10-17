@@ -61,3 +61,14 @@
   появится API задач.
 - Пока эндпоинтов задач нет, на стенде задачи в сводке нулевые. Модель чтения проверена
   интеграционными тестами на строках, которые пишут доменные сущности через мапперы.
+
+## Пересмотр (2026-10-17): API задач
+
+С появлением фичи `tasks` ([ADR 0013](0013-tasks-and-templates.md)):
+
+- `TaskDTO` переехал в `application/tasks/dto.py`, а `next_task` читается той же функцией
+  `load_task_views`, что и список задач. Поэтому `summaries` зависит ещё и от `tasks`
+  (`APPLICATION_FEATURE_DEPS`, `.importlinter`).
+- Проверка участия (`project_of_member`) вынесена из `inventory` в
+  `application/common/membership.py`: ей пользуются все фичи проекта. Зависимость
+  `summaries → inventory` осталась только ради `RoomRefDTO`/`BoxRefDTO`.

@@ -25,6 +25,7 @@ from app.presentation.http.routes import (
     push,
     rooms,
     summaries,
+    tasks,
     users,
 )
 from app.presentation.http.settings import HttpSettings
@@ -77,6 +78,8 @@ def create_app(container: AsyncContainer, settings: HttpSettings) -> FastAPI:
         rooms.router,
         boxes.router,
         items.router,
+        tasks.templates_router,
+        tasks.router,
         push.router,
     )
     for router in routers:

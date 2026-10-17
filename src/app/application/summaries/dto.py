@@ -1,9 +1,9 @@
 from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import datetime
 from uuid import UUID
 
-from app.application.inventory.dto import BoxRefDTO, RoomRefDTO, UserRefDTO
+from app.application.inventory.dto import BoxRefDTO, RoomRefDTO
+from app.application.tasks.dto import TaskDTO
 from app.domain.inventory.box import BoxStatus
 from app.domain.inventory.item import ItemState
 from app.domain.inventory.progress import is_source_room_loaded
@@ -29,23 +29,6 @@ class GetBoxLabelsDTO:
 
 
 # Views
-
-
-@dataclass(frozen=True, slots=True, kw_only=True)
-class TaskDTO:
-    id: UUID
-    title: str
-    description: str | None
-    phase: TaskPhase
-    due_at: datetime | None
-    is_done: bool
-    done_at: datetime | None
-    assignees: tuple[UserRefDTO, ...]
-    """Assignees with an active account, by username."""
-    reminder_offsets_hours: tuple[int, ...]
-    """Ascending."""
-    created_at: datetime
-    updated_at: datetime
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

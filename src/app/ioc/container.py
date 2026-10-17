@@ -8,6 +8,7 @@ from app.ioc.observability_provider import ObservabilityProvider
 from app.ioc.push_provider import PushProvider
 from app.ioc.redis_provider import RedisProvider
 from app.ioc.security_provider import SecurityProvider
+from app.ioc.templates_provider import TemplatesProvider
 from app.ioc.use_cases_provider import UseCaseProvider
 
 
@@ -21,6 +22,7 @@ def create_container(settings: Settings, *extra_providers: Provider) -> AsyncCon
         SecurityProvider(),
         PushProvider(),
         LlmProvider(),
+        TemplatesProvider(),
         UseCaseProvider(),
         ObservabilityProvider(),
         *extra_providers,

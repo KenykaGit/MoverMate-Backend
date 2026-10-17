@@ -60,7 +60,7 @@ import-linter. Все версии закреплены точно: `==` в `pyp
   с `extra={...}`: structlog подхватит поля.
 - Доменные модули (`users`, `tokens`) не импортируют друг друга. Общее лежит в
   `domain/common` (например, `UserId`).
-- Фичи application независимы, кроме `auth → users` и `summaries → inventory`. Новая зависимость между фичами
+- Фичи application независимы, кроме `auth → users` и `summaries → inventory, tasks`. Новая зависимость между фичами
   оформляется осознанно: в `APPLICATION_FEATURE_DEPS` и в `.importlinter`.
 - Технология живёт только в своём адаптере: SQLAlchemy в `infrastructure/db` (и
   `ioc/db_provider.py`), Redis в `infrastructure/redis`, argon2/jwt в `infrastructure/security`,

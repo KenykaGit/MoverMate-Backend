@@ -1,12 +1,13 @@
 import logging
 
 from app.application.common.clock import utc_now
+from app.application.common.membership import project_of_member
 from app.application.common.uow import AbstractUnitOfWork
 from app.application.interfaces.notification_repository import AbstractNotificationRepository
 from app.application.interfaces.project_reader import AbstractProjectReader, ProjectDTO
 from app.application.interfaces.project_repository import AbstractProjectRepository
 from app.application.projects.dto import SetProjectRemindersDTO
-from app.application.projects.lookup import get_member_project_or_raise, read_project_or_raise
+from app.application.projects.lookup import read_project_or_raise
 from app.application.projects.services import MovingReminderScheduler
 from app.domain.common.reminders import MovingReminderOffset
 
@@ -39,7 +40,7 @@ class SetProjectReminders:
             ProjectNotFoundError: no such project, or the user is not its member.
         """
         offsets = [MovingReminderOffset(days) for days in data.offsets_days]
-        project = await get_member_project_or_raise(
+        project = await project_of_member(
             self._projects, data.project_id, data.user_id, for_update=True
         )
 

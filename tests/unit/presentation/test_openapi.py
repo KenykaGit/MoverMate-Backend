@@ -46,9 +46,23 @@ SUMMARY_OPERATION_IDS = {
     "GET /api/v1/projects/{project_id}/unpacking-progress": "getUnpackingProgress",
     "GET /api/v1/projects/{project_id}/labels": "getBoxLabels",
 }
+TASK_OPERATION_IDS = {
+    "GET /api/v1/task-templates": "listTaskTemplates",
+    "POST /api/v1/projects/{project_id}/tasks/from-templates": "createTasksFromTemplates",
+    "GET /api/v1/projects/{project_id}/tasks": "listTasks",
+    "POST /api/v1/projects/{project_id}/tasks": "createTask",
+    "GET /api/v1/tasks/{task_id}": "getTask",
+    "PATCH /api/v1/tasks/{task_id}": "updateTask",
+    "POST /api/v1/tasks/{task_id}/complete": "completeTask",
+    "POST /api/v1/tasks/{task_id}/reopen": "reopenTask",
+    "PUT /api/v1/tasks/{task_id}/assignees": "setTaskAssignees",
+    "PUT /api/v1/tasks/{task_id}/reminders": "setTaskReminders",
+    "DELETE /api/v1/tasks/{task_id}": "deleteTask",
+}
 PROTECTED = {
     *PROJECT_OPERATION_IDS,
     *SUMMARY_OPERATION_IDS,
+    *TASK_OPERATION_IDS,
     "PUT /api/v1/push/subscriptions",
     "DELETE /api/v1/push/subscriptions",
     "GET /api/v1/users/me",
@@ -208,6 +222,7 @@ DECLARED_PARAMETERS = {
         ("query", "offset"),
     },
     "GET /api/v1/projects/{project_id}/labels": {("query", "box_ids")},
+    "GET /api/v1/projects/{project_id}/tasks": {("query", "phase"), ("query", "is_done")},
 }
 
 
@@ -231,7 +246,11 @@ def test_injected_dependencies_do_not_leak_into_parameters(schema: Schema) -> No
 
 def test_operations_have_stable_ids(schema: Schema) -> None:
     expected = (
-        PROJECT_OPERATION_IDS | PUSH_OPERATION_IDS | INVENTORY_OPERATION_IDS | SUMMARY_OPERATION_IDS
+        PROJECT_OPERATION_IDS
+        | PUSH_OPERATION_IDS
+        | INVENTORY_OPERATION_IDS
+        | SUMMARY_OPERATION_IDS
+        | TASK_OPERATION_IDS
     )
     found = {name: operations(schema)[name].get("operationId") for name in expected}
     every_id = [op["operationId"] for op in operations(schema).values()]
@@ -297,6 +316,9 @@ SPECIFIC_ERRORS = [
     ("POST /api/v1/projects/{project_id}/items/scan", "415"),
     ("POST /api/v1/projects/{project_id}/items/scan", "503"),
     *((name, "404") for name in SUMMARY_OPERATION_IDS),
+    *((name, "404") for name in TASK_OPERATION_IDS if "task-templates" not in name),
+    ("POST /api/v1/projects/{project_id}/tasks", "409"),
+    ("PUT /api/v1/tasks/{task_id}/reminders", "409"),
 ]
 
 

@@ -40,6 +40,7 @@ from app.application.interfaces.tokens import (
 )
 from app.application.interfaces.user_repository import AbstractUserRepository
 from app.application.projects.services import MovingReminderScheduler
+from app.application.tasks.services import TaskNotifier
 from app.application.users.register_user import RegisterUser
 from app.config import AuthSettings, LlmSettings, PushSettings, RateLimitSettings, Settings
 from app.domain.common.ids import UserId, new_id
@@ -55,6 +56,7 @@ from app.ioc.db_provider import DatabaseProvider
 from app.ioc.llm_provider import LlmProvider
 from app.ioc.observability_provider import ObservabilityProvider
 from app.ioc.redis_provider import RedisProvider
+from app.ioc.templates_provider import TemplatesProvider
 from app.ioc.use_cases_provider import UseCaseProvider
 from app.presentation.http.settings import HttpSettings, RateLimitPolicy
 
@@ -115,6 +117,7 @@ class TestGraph:
             DatabaseProvider(),
             RedisProvider(),
             LlmProvider(),
+            TemplatesProvider(),
             UseCaseProvider(),
             ObservabilityProvider(),
         )
@@ -132,6 +135,7 @@ class TestGraph:
             IdempotentExecutor,
             CheckReadiness,
             MovingReminderScheduler,
+            TaskNotifier,
         ]
 
         async with container() as request:

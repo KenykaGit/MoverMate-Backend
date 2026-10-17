@@ -1,12 +1,13 @@
 import logging
 
 from app.application.common.clock import utc_now
+from app.application.common.membership import project_of_member
 from app.application.common.patch import UNSET
 from app.application.common.uow import AbstractUnitOfWork
 from app.application.interfaces.project_reader import AbstractProjectReader, ProjectDTO
 from app.application.interfaces.project_repository import AbstractProjectRepository
 from app.application.projects.dto import UpdateProjectDTO
-from app.application.projects.lookup import get_member_project_or_raise, read_project_or_raise
+from app.application.projects.lookup import read_project_or_raise
 from app.application.projects.services import MovingReminderScheduler
 from app.domain.projects.value_objects import Address, ProjectName, TimeZone
 
@@ -34,7 +35,7 @@ class UpdateProject:
             ProjectNotFoundError: no such project, or the user is not its member.
             DomainError: a new value is invalid.
         """
-        project = await get_member_project_or_raise(
+        project = await project_of_member(
             self._projects, data.project_id, data.user_id, for_update=True
         )
         schedule = (project.moving_date, project.time_zone)

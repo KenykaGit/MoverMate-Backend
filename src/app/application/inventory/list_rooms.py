@@ -1,7 +1,7 @@
+from app.application.common.membership import project_of_member
 from app.application.interfaces.project_repository import AbstractProjectRepository
 from app.application.interfaces.room_repository import AbstractRoomRepository
 from app.application.inventory.dto import ListRoomsDTO, RoomDTO
-from app.application.inventory.lookup import project_of_member
 
 
 class ListRooms:

@@ -1,0 +1,76 @@
+# Ready-made tasks users add to their plan (api-endpoints.md, section 8).
+#
+# `id` is the key clients send back to copy a template: never change or reuse one.
+# Lower-case words joined by hyphens. `phase` is BEFORE, DURING (the moving day)
+# or AFTER; within a phase templates are listed in this order. Templates have no
+# due time and no assignees by design (docs/db-design.md, decision 10).
+
+[[templates]]
+id = "notify-management-company"
+title = "Уведомить управляющую компанию"
+description = "Сообщить дату переезда и договориться о лифте и парковке для грузовика."
+phase = "BEFORE"
+
+[[templates]]
+id = "book-movers"
+title = "Заказать грузчиков и транспорт"
+description = "Сравнить предложения, подтвердить дату, время и объём вещей."
+phase = "BEFORE"
+
+[[templates]]
+id = "buy-packing-supplies"
+title = "Купить коробки и упаковочные материалы"
+description = "Коробки, скотч, плёнка, маркеры для подписей."
+phase = "BEFORE"
+
+[[templates]]
+id = "update-address"
+title = "Сменить адрес в документах и сервисах"
+description = "Банк, доставки, подписки, работа, школа или детский сад."
+phase = "BEFORE"
+
+[[templates]]
+id = "transfer-utilities"
+title = "Переоформить интернет и коммунальные услуги"
+description = "Отключить на старом месте и подключить на новом ко дню переезда."
+phase = "BEFORE"
+
+[[templates]]
+id = "pack-documents"
+title = "Собрать документы в отдельную папку"
+description = "Паспорта, договоры, медицинские документы везти с собой, не в коробках."
+phase = "BEFORE"
+
+[[templates]]
+id = "photograph-meters"
+title = "Сфотографировать счетчики"
+description = "На старой и новой квартире, чтобы были видны показания."
+phase = "DURING"
+
+[[templates]]
+id = "check-empty-rooms"
+title = "Обойти пустые комнаты перед выездом"
+description = "Проверить шкафы, балкон и антресоли."
+phase = "DURING"
+
+[[templates]]
+id = "hand-over-keys"
+title = "Передать ключи от старой квартиры"
+phase = "DURING"
+
+[[templates]]
+id = "check-box-delivery"
+title = "Проверить доставку коробок"
+description = "Сверить число коробок со списком и осмотреть хрупкие."
+phase = "AFTER"
+
+[[templates]]
+id = "unpack-first-day"
+title = "Разобрать коробки первого дня"
+description = "Посуда, постельное бельё, средства гигиены."
+phase = "AFTER"
+
+[[templates]]
+id = "register-at-new-address"
+title = "Зарегистрироваться по новому адресу"
+phase = "AFTER"

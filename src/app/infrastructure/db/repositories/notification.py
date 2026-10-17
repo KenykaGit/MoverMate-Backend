@@ -5,8 +5,8 @@ from sqlalchemy import ColumnElement, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.application.interfaces.notification_repository import AbstractNotificationRepository
-from app.domain.common.ids import BoxId, ProjectId, UserId
-from app.domain.common.reminders import MovingReminderOffset
+from app.domain.common.ids import BoxId, ProjectId, TaskId, UserId
+from app.domain.common.reminders import MovingReminderOffset, ReminderOffset
 from app.domain.notifications.notification import (
     Notification,
     NotificationStatus,
@@ -56,6 +56,22 @@ class SqlAlchemyNotificationRepository(AbstractNotificationRepository):
         ]
         if offsets is not None:
             conditions.append(_N.reminder_offset_days.in_([offset.days for offset in offsets]))
+        return await self._cancel(*conditions)
+
+    async def cancel_pending_for_task(
+        self, task_id: TaskId, *, user_id: UserId | None = None
+    ) -> int:
+        conditions = [_N.task_id == task_id]
+        if user_id is not None:
+            conditions.append(_N.user_id == user_id)
+        return await self._cancel(*conditions)
+
+    async def cancel_pending_task_reminders(
+        self, task_id: TaskId, *, offsets: Iterable[ReminderOffset] | None = None
+    ) -> int:
+        conditions = [_N.task_id == task_id, _N.type == NotificationType.TASK_REMINDER.value]
+        if offsets is not None:
+            conditions.append(_N.reminder_offset_hours.in_([offset.hours for offset in offsets]))
         return await self._cancel(*conditions)
 
     async def cancel_pending_for_box(self, box_id: BoxId) -> int:

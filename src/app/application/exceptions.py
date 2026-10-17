@@ -4,6 +4,7 @@ Unlike DomainError (a rule of the model is violated) these describe the outcome
 of a scenario: something is missing, taken, or the caller is not allowed in.
 """
 
+from collections.abc import Iterable
 from uuid import UUID
 
 from app.domain.inventory.value_objects import RoomKind, RoomName
@@ -94,6 +95,28 @@ class ItemNotFoundError(NotFoundError):
     def __init__(self, item_id: UUID) -> None:
         super().__init__(f"Item {item_id} not found")
         self.item_id = item_id
+
+
+class TaskNotFoundError(NotFoundError):
+    def __init__(self, task_id: UUID) -> None:
+        super().__init__(f"Task {task_id} not found")
+        self.task_id = task_id
+
+
+class AssigneeNotCollaboratorError(ApplicationError):
+    """Only members of the task's project can be its assignees."""
+
+    def __init__(self, user_ids: Iterable[UUID] = ()) -> None:
+        # Empty when the database caught it: a member left while the task was saved.
+        self.user_ids = sorted(user_ids)
+        listed = ", ".join(str(user_id) for user_id in self.user_ids) or "an assignee"
+        super().__init__(f"Not a member of the project: {listed}")
+
+
+class UnknownTaskTemplateError(ApplicationError):
+    def __init__(self, template_ids: Iterable[str]) -> None:
+        self.template_ids = sorted(template_ids)
+        super().__init__(f"Unknown task templates: {', '.join(self.template_ids)}")
 
 
 class RoomInUseError(ApplicationError):

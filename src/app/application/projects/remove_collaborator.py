@@ -1,10 +1,10 @@
 import logging
 
+from app.application.common.membership import project_of_member
 from app.application.common.uow import AbstractUnitOfWork
 from app.application.interfaces.notification_repository import AbstractNotificationRepository
 from app.application.interfaces.project_repository import AbstractProjectRepository
 from app.application.projects.dto import RemoveCollaboratorDTO
-from app.application.projects.lookup import get_member_project_or_raise
 from app.domain.common.ids import UserId
 
 logger = logging.getLogger(__name__)
@@ -32,7 +32,7 @@ class RemoveCollaborator:
             ProjectNotFoundError: no such project, or the caller is not its member.
             CannotRemoveOwnerError: the owner never leaves their project.
         """
-        project = await get_member_project_or_raise(
+        project = await project_of_member(
             self._projects, data.project_id, data.user_id, for_update=True
         )
         collaborator_id = UserId(data.collaborator_id)

@@ -1,7 +1,7 @@
+from app.application.common.membership import project_of_member
 from app.application.interfaces.project_reader import AbstractProjectReader, CollaboratorDTO
 from app.application.interfaces.project_repository import AbstractProjectRepository
 from app.application.projects.dto import ProjectActionDTO
-from app.application.projects.lookup import get_member_project_or_raise
 
 
 class ListCollaborators:
@@ -15,5 +15,5 @@ class ListCollaborators:
         Raises:
             ProjectNotFoundError: no such project, or the user is not its member.
         """
-        project = await get_member_project_or_raise(self._projects, data.project_id, data.user_id)
+        project = await project_of_member(self._projects, data.project_id, data.user_id)
         return await self._reader.list_collaborators(project.id)

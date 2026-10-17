@@ -1,6 +1,7 @@
 import logging
 
 from app.application.common.clock import utc_now
+from app.application.common.membership import project_of_member
 from app.application.common.uow import AbstractUnitOfWork
 from app.application.interfaces.audit_log_repository import AbstractAuditLogRepository
 from app.application.interfaces.box_repository import AbstractBoxRepository
@@ -8,7 +9,7 @@ from app.application.interfaces.item_repository import AbstractItemRepository
 from app.application.interfaces.project_repository import AbstractProjectRepository
 from app.application.interfaces.room_repository import AbstractRoomRepository
 from app.application.inventory.dto import BoxDTO, CreateBoxDTO
-from app.application.inventory.lookup import box_view, project_of_member, room_in_project
+from app.application.inventory.lookup import box_view, room_in_project
 from app.application.inventory.read_model import AbstractInventoryReadModel
 from app.application.inventory.services import build_items
 from app.domain.audit.entity import AuditAction, AuditEntry

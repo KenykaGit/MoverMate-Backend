@@ -24,6 +24,10 @@ from app.domain.tasks.value_objects import (
 from app.infrastructure.db.base import Base
 from app.infrastructure.db.constraints import ENUM_LENGTH, one_of
 
+# An assignee is a member of the task's project; the repository turns a violation
+# into AssigneeNotCollaboratorError.
+ASSIGNEE_MEMBER_FK = "fk_task_collaborators_member_project_collaborators"
+
 
 class TaskModel(Base):
     __tablename__ = "tasks"
@@ -87,7 +91,7 @@ class TaskCollaboratorModel(Base):
         ForeignKeyConstraint(
             ["project_id", "user_id"],
             ["project_collaborators.project_id", "project_collaborators.user_id"],
-            name="fk_task_collaborators_member_project_collaborators",
+            name=ASSIGNEE_MEMBER_FK,
             ondelete="CASCADE",
         ),
         Index("ix_task_collaborators_project_id_user_id", "project_id", "user_id"),

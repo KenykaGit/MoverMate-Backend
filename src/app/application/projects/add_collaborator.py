@@ -1,13 +1,13 @@
 import logging
 
 from app.application.common.clock import utc_now
+from app.application.common.membership import project_of_member
 from app.application.common.uow import AbstractUnitOfWork
 from app.application.exceptions import UserNotFoundError
 from app.application.interfaces.project_reader import AbstractProjectReader
 from app.application.interfaces.project_repository import AbstractProjectRepository
 from app.application.interfaces.user_repository import AbstractUserRepository
 from app.application.projects.dto import AddCollaboratorDTO, AddedCollaboratorDTO
-from app.application.projects.lookup import get_member_project_or_raise
 from app.application.projects.services import MovingReminderScheduler
 from app.domain.users.value_objects import Username
 
@@ -41,7 +41,7 @@ class AddCollaborator:
             UserNotFoundError: there is no active user with this username.
         """
         username = Username(data.username)
-        project = await get_member_project_or_raise(
+        project = await project_of_member(
             self._projects, data.project_id, data.user_id, for_update=True
         )
         user = await self._users.get_by_username(username)

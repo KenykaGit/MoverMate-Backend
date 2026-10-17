@@ -141,6 +141,48 @@
   возвращаются все активные коробки, `box_ids` повторяется для выбранных
   (`?box_ids=…&box_ids=…`). Чужие, удалённые и неизвестные id пропускаются, ошибки нет.
 
+### Задачи и шаблоны
+
+План переезда (раздел 8 [api-endpoints.md](../api-endpoints.md)). Задачи проекта видит и
+меняет любой участник, для остальных их нет: 404 `project_not_found` или `task_not_found`.
+Шаблоны — общий для всех каталог в файле, нужен только вход. Решения — в
+[ADR 0013](adr/0013-tasks-and-templates.md).
+
+| Метод | Путь (`/api/v1`) | operationId | Успех | Ошибки |
+|---|---|---|---|---|
+| GET | `/task-templates` | `listTaskTemplates` | 200 `TaskTemplate[]` по этапам | 401 |
+| POST | `/projects/{project_id}/tasks/from-templates` `{template_ids}` | `createTasksFromTemplates` | 201 `Task[]` в порядке выбора | 404 `project_not_found`, 422 `unknown_task_template` |
+| GET | `/projects/{project_id}/tasks?phase=&is_done=` | `listTasks` | 200 `Task[]` | 404 `project_not_found` |
+| POST | `/projects/{project_id}/tasks` | `createTask` | 201 `Task` | 404 `project_not_found`, 409 `reminder_without_due_date`, 422 `assignee_not_collaborator` |
+| GET | `/tasks/{task_id}` | `getTask` | 200 `Task` | 404 `task_not_found` |
+| PATCH | `/tasks/{task_id}` `{title, description, phase, due_at}` | `updateTask` | 200 `Task` | 404 `task_not_found`, 422 |
+| POST | `/tasks/{task_id}/complete` | `completeTask` | 200 `Task`, идемпотентно | 404 `task_not_found` |
+| POST | `/tasks/{task_id}/reopen` | `reopenTask` | 200 `Task`, идемпотентно | 404 `task_not_found` |
+| PUT | `/tasks/{task_id}/assignees` `{user_ids}` | `setTaskAssignees` | 200 `Task` | 404 `task_not_found`, 422 `assignee_not_collaborator` |
+| PUT | `/tasks/{task_id}/reminders` `{offsets_hours}` | `setTaskReminders` | 200 `Task` | 404 `task_not_found`, 409 `reminder_without_due_date`, 422 `invalid_reminder_offset` |
+| DELETE | `/tasks/{task_id}` | `deleteTask` | 204, мягкое удаление | 404 `task_not_found` |
+
+- **`Task`**: `id`, `title`, `description`, `phase` (`BEFORE`/`DURING`/`AFTER`), `due_at`,
+  `is_done`, `done_at`, `assignees` (`UserRef[]` по имени, без удалённых аккаунтов),
+  `reminder_offsets_hours` (по возрастанию), `created_at`, `updated_at`.
+- **Порядок списка** — как на экране плана: `phase` (`BEFORE` → `DURING` → `AFTER`), затем
+  `due_at` (без срока — последними), затем `id`.
+- **`POST /projects/{project_id}/tasks`**: `{title, description?, phase? = BEFORE, due_at?,
+  assignee_ids?, reminder_offsets_hours?}`. `due_at` — время с часовым поясом, без пояса 422.
+- **Шаблоны**: `TaskTemplate {id, title, description, phase}`, `id` — стабильная строка
+  (`notify-management-company`). Копирование атомарное, повтор `id` в одном запросе копируется
+  один раз, связь задачи с шаблоном не хранится: повторный выбор добавит ещё одну задачу.
+- **Срок**: новый `due_at` переносит ожидающие напоминания (оказавшиеся в прошлом
+  отменяются), `due_at: null` удаляет напоминания задачи.
+- **Ответственные** заменяются списком целиком, только участники проекта. Новым, кроме
+  назначившего себя, уходит `TASK_ASSIGNED`. Снятые теряют ожидающие уведомления по задаче, а
+  при выходе из проекта назначения снимаются сами.
+- **Напоминания** — часы до `due_at` от 1 до 8760, список заменяется целиком; пустой список
+  разрешён и без срока. Каждому ответственному по `TASK_REMINDER` на смещение, если момент
+  ещё впереди.
+- **Выполнение** отменяет ожидающие уведомления задачи, возврат в работу ставит напоминания
+  заново. Повтор возвращает 200 и ничего не пишет; первое `done_at` сохраняется.
+
 ## Формат ошибок
 
 Любой ответ с кодом не 2xx имеет одну форму, включая ошибки валидации, 500 и ответы самого nginx:
@@ -172,7 +214,7 @@
 | 404 | `user_not_found` | нет пользователя, в том числе активного с таким `username` при добавлении участника |
 | 404 | `project_not_found` | проекта нет, он удалён или пользователь не участник (неотличимы намеренно) |
 | 403 | `not_box_creator` | напоминание о содержимом ставит или отменяет не создатель коробки |
-| 404 | `room_not_found`, `box_not_found`, `item_not_found` | объекта нет, он удалён или вызывающий не участник проекта |
+| 404 | `room_not_found`, `box_not_found`, `item_not_found`, `task_not_found` | объекта нет, он удалён или вызывающий не участник проекта |
 | 404 / 405 | `not_found`, `method_not_allowed` | нет маршрута или метода |
 | 409 | `username_taken` | имя пользователя занято активным пользователем |
 | 409 | `request_in_progress` | запрос с тем же `Idempotency-Key` ещё выполняется |
@@ -191,6 +233,8 @@
 | 422 | `wrong_room_kind` | коробке нужна комната «куда», вещи — комната «откуда» |
 | 422 | `cross_project_reference` | ссылка на комнату или коробку другого проекта |
 | 422 | `item_box_mismatch` | `box_id` не передан для `IN_BOX` или передан для другого состояния |
+| 422 | `assignee_not_collaborator` | ответственный не участник проекта задачи |
+| 422 | `unknown_task_template` | нет шаблона с таким `id` |
 | 422 | `reminder_in_the_past` | время напоминания уже прошло |
 | 422 | `invalid_pagination` | `limit` вне 1..100 или `offset < 0` |
 | 422 | `idempotency_key_reused` | ключ уже использован с другим телом запроса |

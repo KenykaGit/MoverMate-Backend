@@ -1,6 +1,7 @@
 import logging
 from collections.abc import Iterable
 
+from app.application.common.membership import project_of_member
 from app.application.common.uow import AbstractUnitOfWork
 from app.application.exceptions import (
     InvalidPhotoError,
@@ -14,7 +15,6 @@ from app.application.interfaces.item_recognizer import (
 )
 from app.application.interfaces.project_repository import AbstractProjectRepository
 from app.application.inventory.dto import ScanItemsDTO, ScannedItemDTO
-from app.application.inventory.lookup import project_of_member
 from app.domain.inventory.errors import InvalidItemNameError
 from app.domain.inventory.value_objects import QUANTITY_MAX, ItemName
 
