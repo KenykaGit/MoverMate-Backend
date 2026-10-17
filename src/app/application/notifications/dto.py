@@ -33,3 +33,27 @@ class SubscribeDTO:
 class UnsubscribeDTO:
     user_id: UUID
     endpoint: str = field(repr=False)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class SendTestPushDTO:
+    username: str
+    text: str
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class PushTestFailureDTO:
+    """One subscription the test message did not reach. The endpoint is a
+    capability, so only the subscription id is reported."""
+
+    subscription_id: UUID
+    outcome: str
+    """`GONE` (the subscription was deactivated) or `FAILED`."""
+    detail: str | None
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class PushTestResultDTO:
+    attempted: int
+    delivered: int
+    errors: list[PushTestFailureDTO]

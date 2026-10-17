@@ -28,6 +28,7 @@ PUSH_OPERATION_IDS = {
     "GET /api/v1/push/vapid-public-key": "getVapidPublicKey",
     "PUT /api/v1/push/subscriptions": "upsertPushSubscription",
     "DELETE /api/v1/push/subscriptions": "deletePushSubscription",
+    "POST /api/v1/push/test": "sendTestPush",
 }
 PROJECT_OPERATION_IDS = {
     "GET /api/v1/projects": "listProjects",
@@ -65,6 +66,7 @@ PROTECTED = {
     *TASK_OPERATION_IDS,
     "PUT /api/v1/push/subscriptions",
     "DELETE /api/v1/push/subscriptions",
+    "POST /api/v1/push/test",
     "GET /api/v1/users/me",
     "DELETE /api/v1/users/me",
     "PUT /api/v1/users/me/password",

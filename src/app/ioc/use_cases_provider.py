@@ -31,6 +31,7 @@ from app.application.inventory.update_box import UpdateBox
 from app.application.inventory.update_item import UpdateItem
 from app.application.notifications.deliver_next_notification import DeliverNextNotification
 from app.application.notifications.get_vapid_public_key import GetVapidPublicKey
+from app.application.notifications.send_test_push import SendTestPush
 from app.application.notifications.subscribe_to_push import SubscribeToPush
 from app.application.notifications.unsubscribe_from_push import UnsubscribeFromPush
 from app.application.projects.add_collaborator import AddCollaborator
@@ -105,7 +106,11 @@ class UseCaseProvider(Provider):
         GetProjectSummary, GetLoadingChecklist, GetUnpackingProgress, GetBoxLabels
     )
     notifications = provide_all(
-        DeliverNextNotification, GetVapidPublicKey, SubscribeToPush, UnsubscribeFromPush
+        DeliverNextNotification,
+        GetVapidPublicKey,
+        SubscribeToPush,
+        UnsubscribeFromPush,
+        SendTestPush,
     )
     tasks = provide_all(
         ListTaskTemplates,
