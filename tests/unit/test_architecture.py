@@ -41,11 +41,14 @@ APPLICATION_FEATURE_DEPS = {
     "health": frozenset[str](),
     "projects": frozenset[str](),
     "notifications": frozenset[str](),
+    "inventory": frozenset[str](),
 }
 APPLICATION_SHARED = ("app.application.common", "app.application.interfaces")
 APPLICATION_SHARED_MODULES = ("app.application.exceptions",)
 # Modules of a feature that are not use cases.
-NOT_USE_CASES = frozenset({"dto", "services", "lookup", "__init__"})
+# read_model: a port of a feature (it returns the feature's DTOs, so it cannot live in
+# application/interfaces, which must not import features).
+NOT_USE_CASES = frozenset({"dto", "services", "lookup", "read_model", "__init__"})
 
 # Top-level package -> source paths (relative to src/app) allowed to import it.
 TECHNOLOGY_HOMES: dict[str, tuple[str, ...]] = {

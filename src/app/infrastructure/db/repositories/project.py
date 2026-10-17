@@ -47,3 +47,13 @@ class SqlAlchemyProjectRepository(AbstractProjectRepository):
             select(exists().where(ProjectModel.owner_id == user_id, ProjectModel.is_active))
         )
         return bool(owns)
+
+    async def lock_for_box_numbering(self, project_id: ProjectId) -> None:
+        # FOR NO KEY UPDATE: conflicts with itself, so box creation in one project
+        # queues up, but not with the FOR KEY SHARE that foreign key checks of other
+        # inserts take (docs/db-design.md, section 6).
+        await self._session.execute(
+            select(ProjectModel.id)
+            .where(ProjectModel.id == project_id)
+            .with_for_update(key_share=True)
+        )

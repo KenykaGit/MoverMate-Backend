@@ -43,6 +43,32 @@ PROTECTED = {
     "DELETE /api/v1/users/me",
     "PUT /api/v1/users/me/password",
     "PUT /api/v1/users/me/username",
+    # inventory (api-endpoints.md, sections 5-7)
+    "GET /api/v1/projects/{project_id}/rooms",
+    "POST /api/v1/projects/{project_id}/rooms",
+    "PATCH /api/v1/rooms/{room_id}",
+    "DELETE /api/v1/rooms/{room_id}",
+    "GET /api/v1/projects/{project_id}/boxes",
+    "POST /api/v1/projects/{project_id}/boxes",
+    "GET /api/v1/boxes/{box_id}",
+    "PATCH /api/v1/boxes/{box_id}",
+    "PUT /api/v1/boxes/{box_id}/status",
+    "DELETE /api/v1/boxes/{box_id}",
+    "PUT /api/v1/boxes/{box_id}/contents-reminder",
+    "DELETE /api/v1/boxes/{box_id}/contents-reminder",
+    "GET /api/v1/projects/{project_id}/items",
+    "POST /api/v1/projects/{project_id}/items",
+    "POST /api/v1/projects/{project_id}/items/batch",
+    "GET /api/v1/projects/{project_id}/items/search",
+    "GET /api/v1/items/{item_id}",
+    "PATCH /api/v1/items/{item_id}",
+    "PUT /api/v1/items/{item_id}/state",
+    "DELETE /api/v1/items/{item_id}",
+    "GET /api/v1/items/{item_id}/suggestions",
+}
+# A token is optional: who the caller is decides the answer (a box card opened by QR).
+OPTIONAL_AUTH = {
+    "GET /api/v1/boxes/by-qr/{qr_token}",
 }
 PUBLIC = {
     "GET /api/v1/push/vapid-public-key",
@@ -54,6 +80,31 @@ PUBLIC = {
     "GET /health/ready",
 }
 ERROR_REF = "#/components/schemas/ErrorResponse"
+
+INVENTORY_OPERATION_IDS = {
+    "GET /api/v1/projects/{project_id}/rooms": "listRooms",
+    "POST /api/v1/projects/{project_id}/rooms": "createRoom",
+    "PATCH /api/v1/rooms/{room_id}": "updateRoom",
+    "DELETE /api/v1/rooms/{room_id}": "deleteRoom",
+    "GET /api/v1/projects/{project_id}/boxes": "listBoxes",
+    "POST /api/v1/projects/{project_id}/boxes": "createBox",
+    "GET /api/v1/boxes/{box_id}": "getBox",
+    "PATCH /api/v1/boxes/{box_id}": "updateBox",
+    "PUT /api/v1/boxes/{box_id}/status": "setBoxStatus",
+    "DELETE /api/v1/boxes/{box_id}": "deleteBox",
+    "PUT /api/v1/boxes/{box_id}/contents-reminder": "setBoxContentsReminder",
+    "DELETE /api/v1/boxes/{box_id}/contents-reminder": "cancelBoxContentsReminder",
+    "GET /api/v1/boxes/by-qr/{qr_token}": "getBoxByQr",
+    "GET /api/v1/projects/{project_id}/items": "listItems",
+    "POST /api/v1/projects/{project_id}/items": "createItem",
+    "POST /api/v1/projects/{project_id}/items/batch": "createItems",
+    "GET /api/v1/projects/{project_id}/items/search": "searchItems",
+    "GET /api/v1/items/{item_id}": "getItem",
+    "PATCH /api/v1/items/{item_id}": "updateItem",
+    "PUT /api/v1/items/{item_id}/state": "setItemState",
+    "DELETE /api/v1/items/{item_id}": "deleteItem",
+    "GET /api/v1/items/{item_id}/suggestions": "getItemSuggestions",
+}
 
 
 def _build(*, with_test_routes: bool = False) -> Schema:
@@ -78,8 +129,19 @@ def operations(schema: Schema) -> dict[str, Schema]:
 
 
 def test_every_operation_is_classified(schema: Schema) -> None:
-    assert set(operations(schema)) == PROTECTED | PUBLIC
+    assert set(operations(schema)) == PROTECTED | PUBLIC | OPTIONAL_AUTH
     assert not PROTECTED & PUBLIC
+    assert not (PROTECTED | PUBLIC) & OPTIONAL_AUTH
+
+
+@pytest.mark.parametrize("name", sorted(OPTIONAL_AUTH))
+def test_optional_auth_operations_accept_a_token_and_document_401_and_404(
+    schema: Schema, name: str
+) -> None:
+    operation = operations(schema)[name]
+
+    assert operation.get("security") == [{"HTTPBearer": []}]
+    assert {"401", "404"} <= set(operation["responses"])
 
 
 @pytest.mark.parametrize("name", sorted(PROTECTED))
@@ -108,6 +170,27 @@ def test_bearer_scheme_tells_where_tokens_come_from(schema: Schema) -> None:
 DECLARED_PARAMETERS = {
     "POST /api/v1/projects": {("header", "idempotency-key")},
     "DELETE /api/v1/push/subscriptions": {("query", "endpoint")},
+    "GET /api/v1/projects/{project_id}/rooms": {("query", "kind")},
+    "GET /api/v1/projects/{project_id}/boxes": {
+        ("query", "status"),
+        ("query", "destination_room_id"),
+        ("query", "number"),
+        ("query", "limit"),
+        ("query", "after"),
+    },
+    "GET /api/v1/projects/{project_id}/items": {
+        ("query", "state"),
+        ("query", "priority"),
+        ("query", "box_id"),
+        ("query", "source_room_id"),
+        ("query", "limit"),
+        ("query", "after"),
+    },
+    "GET /api/v1/projects/{project_id}/items/search": {
+        ("query", "q"),
+        ("query", "limit"),
+        ("query", "offset"),
+    },
 }
 
 
@@ -130,7 +213,7 @@ def test_injected_dependencies_do_not_leak_into_parameters(schema: Schema) -> No
 
 
 def test_operations_have_stable_ids(schema: Schema) -> None:
-    expected = PROJECT_OPERATION_IDS | PUSH_OPERATION_IDS
+    expected = PROJECT_OPERATION_IDS | PUSH_OPERATION_IDS | INVENTORY_OPERATION_IDS
     found = {name: operations(schema)[name].get("operationId") for name in expected}
     every_id = [op["operationId"] for op in operations(schema).values()]
 
@@ -152,7 +235,9 @@ def test_only_real_parameters_are_published_with_injection() -> None:
     }
 
 
-@pytest.mark.parametrize("name", sorted(op for op in PROTECTED | PUBLIC if "/api/v1/" in op))
+@pytest.mark.parametrize(
+    "name", sorted(op for op in PROTECTED | PUBLIC | OPTIONAL_AUTH if "/api/v1/" in op)
+)
 def test_versioned_operations_document_the_error_contract(schema: Schema, name: str) -> None:
     responses = operations(schema)[name]["responses"]
 
@@ -180,6 +265,13 @@ def test_versioned_operations_document_the_error_contract(schema: Schema, name: 
         ("DELETE /api/v1/projects/{project_id}/collaborators/{user_id}", "404"),
         ("DELETE /api/v1/projects/{project_id}/collaborators/{user_id}", "409"),
         ("GET /health/ready", "503"),
+        ("POST /api/v1/projects/{project_id}/rooms", "409"),
+        ("DELETE /api/v1/rooms/{room_id}", "409"),
+        ("PUT /api/v1/boxes/{box_id}/status", "409"),
+        ("PUT /api/v1/boxes/{box_id}/contents-reminder", "403"),
+        ("PUT /api/v1/boxes/{box_id}/contents-reminder", "409"),
+        ("PUT /api/v1/items/{item_id}/state", "409"),
+        ("GET /api/v1/items/{item_id}", "404"),
     ],
 )
 def test_specific_error_statuses_are_documented(schema: Schema, name: str, status: str) -> None:
@@ -192,7 +284,8 @@ def _is_named(body: Schema) -> bool:
 
 
 def test_successful_responses_have_a_schema(schema: Schema) -> None:
-    """Every 200/201 body is a named model: clients can generate types from it."""
+    """Every 200/201 body is a named model (or a list of them): clients can generate
+    types from it."""
     untyped = [
         f"{name} {status}"
         for name, operation in operations(schema).items()

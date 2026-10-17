@@ -5,7 +5,7 @@ from sqlalchemy import ColumnElement, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.application.interfaces.notification_repository import AbstractNotificationRepository
-from app.domain.common.ids import ProjectId, UserId
+from app.domain.common.ids import BoxId, ProjectId, UserId
 from app.domain.common.reminders import MovingReminderOffset
 from app.domain.notifications.notification import (
     Notification,
@@ -57,6 +57,9 @@ class SqlAlchemyNotificationRepository(AbstractNotificationRepository):
         if offsets is not None:
             conditions.append(_N.reminder_offset_days.in_([offset.days for offset in offsets]))
         return await self._cancel(*conditions)
+
+    async def cancel_pending_for_box(self, box_id: BoxId) -> int:
+        return await self._cancel(_N.box_id == box_id)
 
     async def _cancel(self, *conditions: ColumnElement[bool]) -> int:
         # The domain rule "only a pending notification changes" is the WHERE clause;

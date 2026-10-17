@@ -1,6 +1,6 @@
 # MoverMate: сверка фронтенда и бэкенда
 
-Источники: [MoverMate.md](MoverMate.md) (ТЗ), [db-design.md](db-design.md), [ADR 0009](0009-moving-domain-aggregates.md) и текущий фронтенд.
+Источники: [MoverMate.md](MoverMate.md) (ТЗ), [db-design.md](db-design.md), [ADR 0010](0010-moving-domain-aggregates.md) и текущий фронтенд.
 Сейчас фронтенд работает целиком на `localStorage` ([store.tsx](src/components/movermate/store.tsx)), а сгенерированный SDK собран по заглушке (`/users`).
 
 Принцип разделения: инварианты, переходы и всё, что считается по большим объёмам данных, остаются на бэкенде, и фронтенд подстраивается под его модель. Бэкенд меняется там, где он расходится с ТЗ или где без него нельзя сделать нормальный UX.

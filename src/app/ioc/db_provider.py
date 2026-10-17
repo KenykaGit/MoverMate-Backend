@@ -6,6 +6,8 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from app.application.common.uow import AbstractUnitOfWork
 from app.application.interfaces.audit_log_repository import AbstractAuditLogRepository
+from app.application.interfaces.box_repository import AbstractBoxRepository
+from app.application.interfaces.item_repository import AbstractItemRepository
 from app.application.interfaces.notification_context import AbstractNotificationContextReader
 from app.application.interfaces.notification_repository import AbstractNotificationRepository
 from app.application.interfaces.project_reader import AbstractProjectReader
@@ -16,9 +18,13 @@ from app.application.interfaces.push_subscription_repository import (
 from app.application.interfaces.refresh_token_repository import AbstractRefreshTokenRepository
 from app.application.interfaces.room_repository import AbstractRoomRepository
 from app.application.interfaces.user_repository import AbstractUserRepository
+from app.application.inventory.read_model import AbstractInventoryReadModel
 from app.config import DatabaseSettings, WorkerSettings
 from app.infrastructure.db.health import DatabaseHealthProbe, NotificationLagProbe
+from app.infrastructure.db.queries.inventory import SqlAlchemyInventoryReadModel
 from app.infrastructure.db.repositories.audit_log import SqlAlchemyAuditLogRepository
+from app.infrastructure.db.repositories.box import SqlAlchemyBoxRepository
+from app.infrastructure.db.repositories.item import SqlAlchemyItemRepository
 from app.infrastructure.db.repositories.notification import SqlAlchemyNotificationRepository
 from app.infrastructure.db.repositories.notification_context import (
     SqlAlchemyNotificationContextReader,
@@ -82,6 +88,15 @@ class DatabaseProvider(Provider):
     )
     room_repository = provide(
         SqlAlchemyRoomRepository, scope=Scope.REQUEST, provides=AbstractRoomRepository
+    )
+    box_repository = provide(
+        SqlAlchemyBoxRepository, scope=Scope.REQUEST, provides=AbstractBoxRepository
+    )
+    item_repository = provide(
+        SqlAlchemyItemRepository, scope=Scope.REQUEST, provides=AbstractItemRepository
+    )
+    inventory_read_model = provide(
+        SqlAlchemyInventoryReadModel, scope=Scope.REQUEST, provides=AbstractInventoryReadModel
     )
     notification_repository = provide(
         SqlAlchemyNotificationRepository,

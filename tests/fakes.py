@@ -7,19 +7,25 @@ and the tests catch that.
 
 import asyncio
 import copy
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
+from app.application.common.pagination import CursorPage, CursorPageRequest
 from app.application.common.uow import AbstractUnitOfWork
 from app.application.exceptions import (
+    BoxNotFoundError,
+    BoxStatusConflictError,
+    ItemNotFoundError,
     ProjectNotFoundError,
     RoomNameTakenError,
+    RoomNotFoundError,
     UsernameAlreadyTakenError,
     UserNotFoundError,
 )
 from app.application.interfaces.audit_log_repository import AbstractAuditLogRepository
+from app.application.interfaces.box_repository import AbstractBoxRepository
 from app.application.interfaces.health import AbstractHealthProbe
 from app.application.interfaces.idempotency import (
     AbstractIdempotencyStore,
@@ -29,6 +35,7 @@ from app.application.interfaces.idempotency import (
     IdempotencyState,
     JsonValue,
 )
+from app.application.interfaces.item_repository import AbstractItemRepository
 from app.application.interfaces.notification_context import (
     AbstractNotificationContextReader,
     NotificationContext,
@@ -61,11 +68,30 @@ from app.application.interfaces.tokens import (
     IssuedAccessToken,
 )
 from app.application.interfaces.user_repository import AbstractUserRepository
-from app.domain.audit.entity import AuditEntry
-from app.domain.common.ids import ProjectId, RoomId, UserId
+from app.application.inventory.dto import (
+    BoxDTO,
+    BoxRefDTO,
+    BoxSuggestionDTO,
+    ItemDTO,
+    ItemSearchDTO,
+    QrBoxDTO,
+    QrBoxItemDTO,
+    RoomRefDTO,
+)
+from app.application.inventory.dto import UserRefDTO as InventoryUserRefDTO
+from app.application.inventory.read_model import AbstractInventoryReadModel
+from app.domain.audit.entity import AuditAction, AuditEntry
+from app.domain.common.ids import BoxId, ItemId, ProjectId, RoomId, UserId
 from app.domain.common.reminders import MovingReminderOffset
+from app.domain.inventory.box import Box, BoxStatus
+from app.domain.inventory.item import Item, ItemState
 from app.domain.inventory.room import Room
-from app.domain.notifications.notification import MovingDateReminder, Notification
+from app.domain.inventory.value_objects import BoxNumber, Priority, QrToken, RoomKind
+from app.domain.notifications.notification import (
+    BoxContentsReminder,
+    MovingDateReminder,
+    Notification,
+)
 from app.domain.notifications.push_subscription import (
     PushEndpoint,
     PushSubscription,
@@ -301,6 +327,7 @@ class InMemoryProjectRepository(AbstractProjectRepository):
         self.projects: dict[ProjectId, Project] = {}
         self.joined: dict[tuple[ProjectId, UserId], datetime] = {}
         self.locks = 0
+        self.numbering_locks: list[ProjectId] = []
         for project in projects:
             self._store(project)
 
@@ -321,6 +348,9 @@ class InMemoryProjectRepository(AbstractProjectRepository):
 
     async def owns_active_projects(self, user_id: UserId) -> bool:
         return any(p.is_active and p.owner_id == user_id for p in self.projects.values())
+
+    async def lock_for_box_numbering(self, project_id: ProjectId) -> None:
+        self.numbering_locks.append(project_id)
 
     def _store(self, project: Project) -> None:
         for member_id in project.member_ids:
@@ -405,20 +435,115 @@ class InMemoryProjectReader(AbstractProjectReader):
 
 
 class InMemoryRoomRepository(AbstractRoomRepository):
-    def __init__(self) -> None:
-        self.rooms: dict[RoomId, Room] = {}
+    def __init__(self, rooms: Iterable[Room] = ()) -> None:
+        self.rooms: dict[RoomId, Room] = {room.id: replace(room) for room in rooms}
+        self.referenced: set[RoomId] = set()
+        """Rooms is_referenced() reports as used (the fake knows no boxes or items)."""
 
     async def add(self, room: Room) -> None:
+        self._check_unique(room)
+        self.rooms[room.id] = replace(room)
+
+    async def get(self, room_id: RoomId) -> Room | None:
+        room = self.rooms.get(room_id)
+        return None if room is None or not room.is_active else replace(room)
+
+    async def list(self, project_id: ProjectId, kind: RoomKind | None = None) -> list[Room]:
+        found = [
+            replace(room)
+            for room in self.rooms.values()
+            if room.is_active and room.project_id == project_id and kind in {None, room.kind}
+        ]
+        return sorted(found, key=lambda room: (room.name.value, room.id))
+
+    async def update(self, room: Room) -> None:
+        if room.id not in self.rooms:
+            raise RoomNotFoundError(room.id)
+        self._check_unique(room)
+        self.rooms[room.id] = replace(room)
+
+    async def is_referenced(self, room_id: RoomId) -> bool:
+        return room_id in self.referenced
+
+    def _check_unique(self, room: Room) -> None:
+        """Mirrors the partial unique index on (project_id, kind, name) WHERE is_active."""
+        key = (room.project_id, room.kind, room.name)
         clash = any(
-            other.is_active
-            and other.project_id == room.project_id
-            and other.kind is room.kind
-            and other.name == room.name
+            other.id != room.id
+            and other.is_active
+            and (other.project_id, other.kind, other.name) == key
             for other in self.rooms.values()
         )
         if room.is_active and clash:
             raise RoomNameTakenError(room.kind, room.name)
-        self.rooms[room.id] = replace(room)
+
+
+class InMemoryBoxRepository(AbstractBoxRepository):
+    def __init__(self, boxes: Iterable[Box] = ()) -> None:
+        self.boxes: dict[BoxId, Box] = {box.id: replace(box) for box in boxes}
+        self.conflict = False
+        """Simulates a concurrent status change: change_status() then fails."""
+
+    async def add(self, box: Box) -> None:
+        self.boxes[box.id] = replace(box)
+
+    async def get(self, box_id: BoxId) -> Box | None:
+        box = self.boxes.get(box_id)
+        return None if box is None or not box.is_active else replace(box)
+
+    async def get_by_qr_token(self, qr_token: QrToken) -> Box | None:
+        found = (b for b in self.boxes.values() if b.qr_token == qr_token and b.is_active)
+        box = next(found, None)
+        return None if box is None else replace(box)
+
+    async def next_free_number(self, project_id: ProjectId) -> BoxNumber:
+        taken = {
+            box.number.value
+            for box in self.boxes.values()
+            if box.is_active and box.project_id == project_id
+        }
+        return BoxNumber(next(n for n in range(1, len(taken) + 2) if n not in taken))
+
+    async def update(self, box: Box) -> None:
+        stored = self.boxes.get(box.id)
+        if stored is None:
+            raise BoxNotFoundError(box.id)
+        # Like the real one: everything but the status.
+        self.boxes[box.id] = replace(
+            box, status=stored.status, status_changed_at=stored.status_changed_at
+        )
+
+    async def change_status(self, box: Box, *, expected: BoxStatus) -> None:
+        stored = self.boxes.get(box.id)
+        if self.conflict or stored is None or stored.status is not expected:
+            raise BoxStatusConflictError(str(box.id))
+        self.boxes[box.id] = replace(
+            stored, status=box.status, status_changed_at=box.status_changed_at
+        )
+
+
+class InMemoryItemRepository(AbstractItemRepository):
+    def __init__(self, items: Iterable[Item] = ()) -> None:
+        self.items: dict[ItemId, Item] = {item.id: replace(item) for item in items}
+
+    async def add_many(self, items: Sequence[Item]) -> None:
+        for item in items:
+            self.items[item.id] = replace(item)
+
+    async def get(self, item_id: ItemId) -> Item | None:
+        item = self.items.get(item_id)
+        return None if item is None or not item.is_active else replace(item)
+
+    async def update(self, item: Item) -> None:
+        if item.id not in self.items:
+            raise ItemNotFoundError(item.id)
+        self.items[item.id] = replace(item)
+
+    async def deactivate_in_box(self, box_id: BoxId) -> int:
+        inside = [i for i in self.items.values() if i.box_id == box_id and i.is_active]
+        for item in inside:
+            item.soft_delete()
+        return len(inside)
 
 
 class InMemoryNotificationRepository(AbstractNotificationRepository):
@@ -459,11 +584,19 @@ class InMemoryNotificationRepository(AbstractNotificationRepository):
             )
         )
 
+    async def cancel_pending_for_box(self, box_id: BoxId) -> int:
+        return self._cancel(lambda n: _box_of(n) == box_id)
+
     def pending(self) -> list[Notification]:
         return [n for n in self.notifications if n.is_pending]
 
     def _cancel(self, predicate: Callable[[Notification], bool]) -> int:
         return sum(n.cancel() for n in self.notifications if predicate(n))
+
+
+def _box_of(notification: Notification) -> BoxId | None:
+    target = notification.target
+    return target.box_id if isinstance(target, BoxContentsReminder) else None
 
 
 class InMemoryAuditLogRepository(AbstractAuditLogRepository):
@@ -472,6 +605,9 @@ class InMemoryAuditLogRepository(AbstractAuditLogRepository):
 
     async def add(self, entry: AuditEntry) -> None:
         self.entries.append(entry)
+
+    def actions(self) -> list[AuditAction]:
+        return [entry.action for entry in self.entries]
 
 
 class InMemoryPushSubscriptionRepository(AbstractPushSubscriptionRepository):
@@ -528,3 +664,158 @@ class FakeNotificationContextReader(AbstractNotificationContextReader):
 
     async def get(self, notification: Notification) -> NotificationContext:  # noqa: ARG002
         return self.context
+
+
+class FakeInventoryReadModel(AbstractInventoryReadModel):
+    """Views built from the in-memory repositories. Lists ignore filters and paging:
+    their SQL is what matters, and it is tested against PostgreSQL."""
+
+    TIMESTAMP = datetime(2026, 1, 1, tzinfo=UTC)
+
+    def __init__(
+        self,
+        users: InMemoryUserRepository,
+        rooms: InMemoryRoomRepository,
+        boxes: InMemoryBoxRepository,
+        items: InMemoryItemRepository,
+        notifications: InMemoryNotificationRepository,
+    ) -> None:
+        self._users = users
+        self._rooms = rooms
+        self._boxes = boxes
+        self._items = items
+        self._notifications = notifications
+        self.searches: list[tuple[str, ...]] = []
+
+    async def box(self, box_id: BoxId, *, viewer_id: UserId) -> BoxDTO | None:
+        box = self._boxes.boxes.get(box_id)
+        if box is None or not box.is_active:
+            return None
+        inside = self._in_box(box_id)
+        reminders = (
+            n.scheduled_at
+            for n in self._notifications.pending()
+            if _box_of(n) == box_id and n.user_id == viewer_id
+        )
+        creator = self._users.users[box.created_by]
+        return BoxDTO(
+            id=box.id,
+            number=box.number.value,
+            title=None if box.title is None else box.title.value,
+            is_fragile=box.is_fragile,
+            destination_room=self._room_ref(box.destination_room_id),
+            status=box.status,
+            status_changed_at=box.status_changed_at,
+            created_by=InventoryUserRefDTO(id=creator.id, username=creator.username.value),
+            qr_token=box.qr_token.value,
+            item_count=len(inside),
+            items_preview=tuple(item.name.value for item in inside[:3]),
+            contents_reminder_at=next(reminders, None),
+            created_at=self.TIMESTAMP,
+            updated_at=self.TIMESTAMP,
+        )
+
+    async def boxes(
+        self,
+        project_id: ProjectId,
+        *,
+        viewer_id: UserId,
+        statuses: Sequence[BoxStatus],  # noqa: ARG002
+        destination_room_id: RoomId | None,  # noqa: ARG002
+        number: int | None,  # noqa: ARG002
+        page: CursorPageRequest,  # noqa: ARG002
+    ) -> CursorPage[BoxDTO]:
+        found = sorted(
+            (b for b in self._boxes.boxes.values() if b.is_active and b.project_id == project_id),
+            key=lambda b: b.number,
+        )
+        views = [await self.box(b.id, viewer_id=viewer_id) for b in found]
+        return CursorPage(items=tuple(v for v in views if v is not None), next_cursor=None)
+
+    async def qr_box(self, box_id: BoxId) -> QrBoxDTO | None:
+        box = self._boxes.boxes.get(box_id)
+        if box is None or not box.is_active:
+            return None
+        return QrBoxDTO(
+            id=box.id,
+            number=box.number.value,
+            title=None if box.title is None else box.title.value,
+            is_fragile=box.is_fragile,
+            destination_room=self._room_ref(box.destination_room_id),
+            status=box.status,
+            items=tuple(
+                QrBoxItemDTO(id=i.id, name=i.name.value, quantity=i.quantity.value)
+                for i in self._in_box(box_id)
+            ),
+        )
+
+    async def items(
+        self,
+        project_id: ProjectId,
+        *,
+        states: Sequence[ItemState],  # noqa: ARG002
+        priority: Priority | None,  # noqa: ARG002
+        box_id: BoxId | None,  # noqa: ARG002
+        source_room_id: RoomId | None,  # noqa: ARG002
+        page: CursorPageRequest,  # noqa: ARG002
+    ) -> CursorPage[ItemDTO]:
+        found = [
+            i.id for i in self._items.items.values() if i.is_active and i.project_id == project_id
+        ]
+        return CursorPage(items=tuple(await self.items_by_ids(found)), next_cursor=None)
+
+    async def items_by_ids(self, item_ids: Sequence[ItemId]) -> list[ItemDTO]:
+        stored = [self._items.items.get(item_id) for item_id in item_ids]
+        return [self._item_view(item) for item in stored if item is not None and item.is_active]
+
+    async def search(
+        self,
+        project_id: ProjectId,  # noqa: ARG002
+        words: Sequence[str],
+        *,
+        limit: int,  # noqa: ARG002
+        offset: int,  # noqa: ARG002
+    ) -> ItemSearchDTO:
+        self.searches.append(tuple(words))
+        return ItemSearchDTO(items=(), has_more=False)
+
+    async def suggestions(
+        self,
+        project_id: ProjectId,  # noqa: ARG002
+        source_room_id: RoomId,  # noqa: ARG002
+        *,
+        exclude_box_id: BoxId | None,  # noqa: ARG002
+    ) -> list[BoxSuggestionDTO]:
+        return []
+
+    def _item_view(self, item: Item) -> ItemDTO:
+        box = None if item.box_id is None else self._boxes.boxes[item.box_id]
+        box_ref = (
+            None
+            if box is None
+            else BoxRefDTO(
+                id=box.id,
+                number=box.number.value,
+                status=box.status,
+                destination_room=self._room_ref(box.destination_room_id),
+            )
+        )
+        return ItemDTO(
+            id=item.id,
+            name=item.name.value,
+            quantity=item.quantity.value,
+            priority=item.priority,
+            state=item.state,
+            source_room=self._room_ref(item.source_room_id),
+            box=box_ref,
+            created_at=self.TIMESTAMP,
+            updated_at=self.TIMESTAMP,
+        )
+
+    def _in_box(self, box_id: BoxId) -> list[Item]:
+        inside = [i for i in self._items.items.values() if i.box_id == box_id and i.is_active]
+        return sorted(inside, key=lambda i: (i.priority, i.name.value.lower(), i.id))
+
+    def _room_ref(self, room_id: RoomId) -> RoomRefDTO:
+        room = self._rooms.rooms[room_id]
+        return RoomRefDTO(id=room.id, name=room.name.value)

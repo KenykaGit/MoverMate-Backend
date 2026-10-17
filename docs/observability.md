@@ -90,6 +90,11 @@ SQLAlchemy) проходят через один конвейер. Каждая 
 | **`project_delete_forbidden`** | **warning** | `project_id`, `user_id` | участник, не владелец, пытался удалить проект (403); серия таких событий — ошибка клиента или попытка злоупотребления |
 | `collaborator_added` | info | `project_id`, `user_id`, `collaborator_id` | `user_id` добавил участника (повторное добавление не пишется) |
 | `collaborator_removed`, `project_left` | info | `project_id`, `user_id`, `collaborator_id` | участник убран другим участником / вышел сам; его ожидающие уведомления в проекте отменены |
+| `box_created` | info | `box_id`, `number`, `items` | новая коробка; `items` — сколько вещей сразу положили в неё |
+| `box_status_changed` | info | `box_id`, `from_status`, `to_status`, `rollback` | шаг статуса коробки; `rollback=true` — откат на шаг назад |
+| `box_deleted` | info | `box_id`, `items` | коробка удалена вместе с `items` вещами внутри |
+| `item_state_changed` | info | `item_id`, `from_state`, `to_state` | вещь упакована, выложена, потеряна или найдена |
+| `room_deleted` | info | `room_id`, `user_id` | удалена неиспользуемая комната |
 | `redis_unavailable` | warning | `op`, `error` | операция Redis не удалась, сработал fail-open |
 | `readiness_check_failed` | warning | `dependency`, `error` | зависимость не прошла проверку `/health/ready` |
 | `idempotency_record_corrupted` | warning | ключ | запись в Redis не читается (например, после смены формата) |

@@ -40,8 +40,45 @@
 
 На всех `/api/v1/*` возможны 429 `rate_limited` и 500 `internal_error`. Эндпоинты `users`,
 `projects` и `push/subscriptions` требуют `Authorization: Bearer <access_token>`. Явный
-`operationId` (в скобках) пока есть только у маршрутов проектов и push. Если api недоступен, nginx отвечает
-503 `service_unavailable` в том же формате и с `Retry-After`.
+`operationId` (в скобках) пока есть только у маршрутов проектов и push. Если api недоступен, nginx отвечает 503 `service_unavailable` в том же формате и с `Retry-After`.
+
+### Инвентарь: комнаты, коробки, вещи
+
+Контракт по [api-endpoints.md](../api-endpoints.md) (разделы 5–7, 9). Все операции требуют
+`Authorization: Bearer`, кроме `getBoxByQr`, где токен необязателен. Объекту чужого проекта
+отвечает 404, а не 403: для не-участника проекта и его содержимого не существует. У каждой
+операции явный `operationId`, его проверяет `tests/unit/presentation/test_openapi.py`.
+`PATCH` меняет только переданные поля; `null` очищает необязательное поле (`title` коробки),
+а у остальных полей даёт 422 `validation_error`.
+
+| Метод | Путь (`/api/v1`) | operationId | Успех | Ошибки |
+|---|---|---|---|---|
+| GET | `/projects/{project_id}/rooms?kind=` | `listRooms` | 200 `Room[]` | 404 `project_not_found` |
+| POST | `/projects/{project_id}/rooms` `{kind, name}` | `createRoom` | 201 `Room` | 404 `project_not_found`, 409 `room_name_taken` |
+| PATCH | `/rooms/{room_id}` `{name}` | `updateRoom` | 200 `Room` | 404 `room_not_found`, 409 `room_name_taken` |
+| DELETE | `/rooms/{room_id}` | `deleteRoom` | 204 | 404 `room_not_found`, 409 `room_in_use` |
+| GET | `/projects/{project_id}/boxes?status=&destination_room_id=&number=&limit=&after=` | `listBoxes` | 200 `BoxPage` | 404 `project_not_found` |
+| POST | `/projects/{project_id}/boxes` | `createBox` | 201 `Box` | 404 `project_not_found`/`room_not_found`, 422 `wrong_room_kind` |
+| GET | `/boxes/by-qr/{qr_token}` | `getBoxByQr` | 200 `BoxByQr` | 401 `not_authenticated` (`PROTECTED` без входа), 404 `box_not_found` |
+| GET | `/boxes/{box_id}` | `getBox` | 200 `Box` | 404 `box_not_found` |
+| PATCH | `/boxes/{box_id}` `{title, is_fragile, destination_room_id}` | `updateBox` | 200 `Box` | 404 `box_not_found`/`room_not_found`, 422 `wrong_room_kind` |
+| PUT | `/boxes/{box_id}/status` `{status}` | `setBoxStatus` | 200 `Box` | 404 `box_not_found`, 409 `invalid_box_transition`/`box_status_conflict` |
+| DELETE | `/boxes/{box_id}` | `deleteBox` | 204 | 404 `box_not_found` |
+| PUT | `/boxes/{box_id}/contents-reminder` `{remind_at}` | `setBoxContentsReminder` | 200 `Box` | 403 `not_box_creator`, 404 `box_not_found`, 409 `box_not_packing`, 422 `reminder_in_the_past` |
+| DELETE | `/boxes/{box_id}/contents-reminder` | `cancelBoxContentsReminder` | 204 | 403 `not_box_creator`, 404 `box_not_found` |
+| GET | `/projects/{project_id}/items?state=&priority=&box_id=&source_room_id=&limit=&after=` | `listItems` | 200 `ItemPage` | 404 `project_not_found` |
+| POST | `/projects/{project_id}/items` | `createItem` | 201 `Item` | 404 `project_not_found`/`room_not_found`/`box_not_found`, 422 `wrong_room_kind` |
+| POST | `/projects/{project_id}/items/batch` (до 100 записей) | `createItems` | 201 `Item[]` | 404 `project_not_found`/`room_not_found`/`box_not_found`, 422 |
+| GET | `/projects/{project_id}/items/search?q=&limit=&offset=` | `searchItems` | 200 `ItemSearchResult` | 404 `project_not_found` |
+| GET | `/items/{item_id}` | `getItem` | 200 `Item` | 404 `item_not_found` |
+| PATCH | `/items/{item_id}` `{name, quantity, priority, source_room_id}` | `updateItem` | 200 `Item` | 404 `item_not_found`/`room_not_found`, 422 `wrong_room_kind` |
+| PUT | `/items/{item_id}/state` `{state, box_id?}` | `setItemState` | 200 `Item` | 404 `item_not_found`/`box_not_found`, 409 `invalid_item_transition`, 422 `item_box_mismatch` |
+| DELETE | `/items/{item_id}` | `deleteItem` | 204 | 404 `item_not_found` |
+| GET | `/items/{item_id}/suggestions` | `getItemSuggestions` | 200 `ItemSuggestion[]` | 404 `item_not_found` |
+
+Длинные списки отдаются по курсору: `{"results": [...], "next_cursor": "..." | null}`, `limit`
+от 1 до 100 (по умолчанию 50). Поиск сортирует по рангу и поэтому пагинируется через
+`limit`/`offset`: `{"results": [...], "has_more": true}`. Если api недоступен, nginx отвечает
 
 ## Формат ошибок
 
@@ -73,6 +110,8 @@
 | 403 | `not_project_owner` | действие доступно только владельцу проекта (удаление проекта) |
 | 404 | `user_not_found` | нет пользователя, в том числе активного с таким `username` при добавлении участника |
 | 404 | `project_not_found` | проекта нет, он удалён или пользователь не участник (неотличимы намеренно) |
+| 403 | `not_box_creator` | напоминание о содержимом ставит или отменяет не создатель коробки |
+| 404 | `room_not_found`, `box_not_found`, `item_not_found` | объекта нет, он удалён или вызывающий не участник проекта |
 | 404 / 405 | `not_found`, `method_not_allowed` | нет маршрута или метода |
 | 409 | `username_taken` | имя пользователя занято активным пользователем |
 | 409 | `request_in_progress` | запрос с тем же `Idempotency-Key` ещё выполняется |
@@ -82,11 +121,16 @@
 | 409 | `invalid_box_transition` | статус коробки меняется не на один шаг вперёд или назад |
 | 409 | `invalid_item_transition` | переход вещи вне матрицы состояний (`docs/db-design.md`, 5.2) |
 | 409 | `reminder_without_due_date` | напоминание у задачи без срока |
+| 409 | `room_in_use` | на комнату ссылаются активные коробки или вещи |
+| 409 | `box_status_conflict` | статус коробки изменили параллельно: перечитайте её |
+| 409 | `box_not_packing` | напоминание о содержимом для коробки не в `PACKING` |
 | 422 | `validation_error` | тело, query или заголовок не соответствуют схеме |
 | 422 | `invalid_username`, `invalid_password`, `invalid_value` | значение нарушает правило домена |
 | 422 | `invalid_project_name`, `invalid_address`, `invalid_time_zone`, `invalid_room_name`, `invalid_box_number`, `invalid_box_title`, `invalid_qr_token`, `invalid_item_name`, `invalid_quantity`, `invalid_task_title`, `invalid_task_description`, `invalid_due_date`, `invalid_reminder_offset`, `invalid_moving_reminder_offset`, `invalid_push_subscription` | значение нарушает правило домена (длина, диапазон, формат; срок без часового пояса; неизвестный IANA-пояс) |
 | 422 | `wrong_room_kind` | коробке нужна комната «куда», вещи — комната «откуда» |
 | 422 | `cross_project_reference` | ссылка на комнату или коробку другого проекта |
+| 422 | `item_box_mismatch` | `box_id` не передан для `IN_BOX` или передан для другого состояния |
+| 422 | `reminder_in_the_past` | время напоминания уже прошло |
 | 422 | `invalid_pagination` | `limit` вне 1..100 или `offset < 0` |
 | 422 | `idempotency_key_reused` | ключ уже использован с другим телом запроса |
 | 429 | `rate_limited` | превышен лимит, см. `Retry-After` |

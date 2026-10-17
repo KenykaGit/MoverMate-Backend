@@ -78,6 +78,48 @@ class NotAuthenticatedError(ApplicationError):
         super().__init__("Not authenticated")
 
 
+class RoomNotFoundError(NotFoundError):
+    def __init__(self, room_id: UUID) -> None:
+        super().__init__(f"Room {room_id} not found")
+        self.room_id = room_id
+
+
+class BoxNotFoundError(NotFoundError):
+    def __init__(self, box_id: UUID | str) -> None:
+        super().__init__(f"Box {box_id} not found")
+        self.box_id = box_id
+
+
+class ItemNotFoundError(NotFoundError):
+    def __init__(self, item_id: UUID) -> None:
+        super().__init__(f"Item {item_id} not found")
+        self.item_id = item_id
+
+
+class RoomInUseError(ApplicationError):
+    """Active boxes or items still refer to the room."""
+
+
+class BoxStatusConflictError(ApplicationError):
+    """The box changed status concurrently: re-read it and retry."""
+
+
+class NotBoxCreatorError(ApplicationError):
+    """Only the creator of a box schedules the reminder to fill in its contents."""
+
+
+class BoxNotPackingError(ApplicationError):
+    """A contents reminder makes sense only while the box is being packed."""
+
+
+class ReminderInThePastError(ApplicationError):
+    """The moment of a reminder has already passed."""
+
+
+class ItemBoxMismatchError(ApplicationError):
+    """`box_id` is required to put an item IN_BOX and not allowed for other states."""
+
+
 class InvalidPaginationError(ApplicationError):
     """limit or offset is out of the allowed range."""
 

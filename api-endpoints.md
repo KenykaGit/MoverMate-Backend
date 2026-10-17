@@ -1,7 +1,7 @@
 # MoverMate: HTTP API для фронтенда
 
 Список эндпоинтов, которые нужны фронтенду, с учётом решений из [frontend-backend-alignment.md](frontend-backend-alignment.md) (раздел 4).
-Модель данных — [db-design.md](db-design.md) и [ADR 0009](0009-moving-domain-aggregates.md) плюс принятые изменения: этап задачи `phase`, `title` и `is_fragile` у коробки, ручной выбор шаблонов, напоминание о дате переезда, удаление проекта только владельцем.
+Модель данных — [db-design.md](db-design.md) и [ADR 0010](0010-moving-domain-aggregates.md) плюс принятые изменения: этап задачи `phase`, `title` и `is_fragile` у коробки, ручной выбор шаблонов, напоминание о дате переезда, удаление проекта только владельцем.
 
 ---
 

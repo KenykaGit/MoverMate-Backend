@@ -36,3 +36,13 @@ class AbstractProjectRepository(ABC):
     @abstractmethod
     async def owns_active_projects(self, user_id: UserId) -> bool:
         """Whether the user owns at least one active project."""
+
+    @abstractmethod
+    async def lock_for_box_numbering(self, project_id: ProjectId) -> None:
+        """Serialize box creation in the project until the transaction ends.
+
+        Two concurrent transactions would otherwise both see the same lowest free
+        number. Unlike `get_by_id(for_update=True)`, this lock does not block the
+        foreign key checks of other inserts into the project, so items and rooms
+        are still created meanwhile (docs/db-design.md, section 6).
+        """

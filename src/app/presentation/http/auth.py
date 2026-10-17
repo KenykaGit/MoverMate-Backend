@@ -29,4 +29,19 @@ async def get_current_user(
     return user
 
 
+@inject
+async def get_optional_user(
+    authenticate: FromDishka[AuthenticateUser],
+    credentials: Annotated[HTTPAuthorizationCredentials | None, Security(bearer_scheme)],
+) -> UserDTO | None:
+    """Like get_current_user, but no token means an anonymous caller (None).
+    A token that is sent but invalid is still rejected with 401."""
+    if credentials is None:
+        return None
+    user = await authenticate(credentials.credentials)
+    structlog.contextvars.bind_contextvars(user_id=str(user.id))
+    return user
+
+
 CurrentUser = Annotated[UserDTO, Depends(get_current_user)]
+OptionalUser = Annotated[UserDTO | None, Depends(get_optional_user)]

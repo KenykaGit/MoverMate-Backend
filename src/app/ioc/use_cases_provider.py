@@ -6,6 +6,28 @@ from app.application.auth.logout import Logout
 from app.application.auth.refresh_tokens import RefreshTokens
 from app.application.auth.services import CredentialsVerifier, TokenPairIssuer
 from app.application.common.idempotency import IdempotentExecutor
+from app.application.inventory.cancel_contents_reminder import CancelContentsReminder
+from app.application.inventory.change_box_status import ChangeBoxStatus
+from app.application.inventory.change_item_state import ChangeItemState
+from app.application.inventory.create_box import CreateBox
+from app.application.inventory.create_item import CreateItem
+from app.application.inventory.create_items import CreateItems
+from app.application.inventory.create_room import CreateRoom
+from app.application.inventory.delete_box import DeleteBox
+from app.application.inventory.delete_item import DeleteItem
+from app.application.inventory.delete_room import DeleteRoom
+from app.application.inventory.get_box import GetBox
+from app.application.inventory.get_box_by_qr import GetBoxByQr
+from app.application.inventory.get_item import GetItem
+from app.application.inventory.list_boxes import ListBoxes
+from app.application.inventory.list_items import ListItems
+from app.application.inventory.list_rooms import ListRooms
+from app.application.inventory.rename_room import RenameRoom
+from app.application.inventory.schedule_contents_reminder import ScheduleContentsReminder
+from app.application.inventory.search_items import SearchItems
+from app.application.inventory.suggest_boxes import SuggestBoxes
+from app.application.inventory.update_box import UpdateBox
+from app.application.inventory.update_item import UpdateItem
 from app.application.notifications.deliver_next_notification import DeliverNextNotification
 from app.application.notifications.get_vapid_public_key import GetVapidPublicKey
 from app.application.notifications.subscribe_to_push import SubscribeToPush
@@ -60,4 +82,28 @@ class UseCaseProvider(Provider):
     )
     notifications = provide_all(
         DeliverNextNotification, GetVapidPublicKey, SubscribeToPush, UnsubscribeFromPush
+    )
+    inventory = provide_all(
+        ListRooms,
+        CreateRoom,
+        RenameRoom,
+        DeleteRoom,
+        ListBoxes,
+        CreateBox,
+        GetBox,
+        GetBoxByQr,
+        UpdateBox,
+        ChangeBoxStatus,
+        DeleteBox,
+        ScheduleContentsReminder,
+        CancelContentsReminder,
+        ListItems,
+        CreateItem,
+        CreateItems,
+        GetItem,
+        UpdateItem,
+        ChangeItemState,
+        DeleteItem,
+        SearchItems,
+        SuggestBoxes,
     )

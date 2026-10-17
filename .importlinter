@@ -63,6 +63,7 @@ modules =
     app.application.health
     app.application.projects
     app.application.notifications
+    app.application.inventory
 ignore_imports =
     app.application.auth.** -> app.application.users.**
 
