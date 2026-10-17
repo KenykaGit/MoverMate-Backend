@@ -16,14 +16,18 @@ commit ─▶ MR ─▶ check (параллельно) ─▶ build ─▶ merge
    коммита безопасна: существующий тег считается успехом.
 4. **Deploy** (кнопка в пайплайне основной ветки; вход на сервер через Teleport; CI кладёт на VM
    docker-конфиг с IAM-токеном Spirit в `$DEPLOY_DIR/.docker`, `docker compose` читает его через
-   `DOCKER_CONFIG`) копирует `docker-compose.prod.yml` и
-   `docker/nginx/nginx.conf` в `$DEPLOY_DIR` и выполняет на сервере:
+   `DOCKER_CONFIG`) копирует `docker-compose.prod.yml`, prod-конфиг nginx (`docker/nginx/`)
+   и скрипт certbot (`docker/certbot/`) в `$DEPLOY_DIR` и выполняет на сервере:
    1. `docker compose pull api`;
    2. `docker compose run --rm migrate` — `alembic upgrade head` тем же образом. Если миграция
       упала, job красный, а старый api продолжает обслуживать трафик;
-   3. `docker compose up -d --wait api nginx` — ждёт HEALTHCHECK обоих контейнеров;
+   3. `docker compose up -d --wait api certbot nginx` — ждёт HEALTHCHECK контейнеров. certbot
+      при первом запуске кладёт self-signed заглушку, выпускает сертификат Let's Encrypt для
+      `DOMAIN` и затем сам продлевает его ([ADR 0009](adr/0009-tls-letsencrypt-certbot.md));
    4. `nginx -t && nginx -s reload` — конфиг nginx едет вместе с коммитом;
-   5. smoke-тест: `/health/ready` через nginx должен вернуть `version` нового коммита.
+   5. smoke-тест: `https://127.0.0.1/health/ready` должен вернуть `version` нового коммита
+      (`curl -k`: сразу после первого деплоя ещё может отдаваться заглушка). Если доверенного
+      сертификата для `DOMAIN` пока нет, job печатает предупреждение, но не падает.
 
 ## Правила миграций
 
@@ -58,6 +62,7 @@ commit ─▶ MR ─▶ check (параллельно) ─▶ build ─▶ merge
   на новой схеме и откат кода не требует `downgrade`. `alembic downgrade` на проде — крайняя
   мера: делается вручную после бэкапа (`docker compose exec db pg_dump ...`).
 - **Конфиг nginx** откатывается вместе с коммитом: deploy копирует `docker/nginx/` и делает reload.
+  Тома `letsencrypt` и `tls` откат не трогает: сертификат остаётся на месте.
 
 ## Обновление версий инфраструктуры
 
@@ -105,12 +110,21 @@ Postgres создаст рядом **пустой** кластер. Поэтом
    | `POSTGRES_PASSWORD` | Variable, masked + protected | пароль Postgres |
    | `AUTH__SECRET_KEY` | Variable, masked + protected | ключ подписи токенов, >= 32 символов: `python -c "import secrets; print(secrets.token_urlsafe(48))"` |
    | `CORS_ORIGINS` | Variable | JSON-список источников, например `["https://app.example.com"]`; по умолчанию `[]` |
+   | `DOMAIN` | Variable | публичное имя сервиса для сертификата Let's Encrypt, например `api.example.com` |
+   | `CERTBOT_EMAIL` | Variable, необязательная | e-mail аккаунта Let's Encrypt (уведомления о проблемах с аккаунтом); без неё аккаунт регистрируется без почты |
 
    Значения без одинарных кавычек. Смена `POSTGRES_PASSWORD` не меняет пароль в уже созданной
    БД (Postgres читает его только при инициализации тома): нужен ещё `ALTER USER`. Смена
    `AUTH__SECRET_KEY` разлогинит всех пользователей.
-5. Если перед nginx стоит балансировщик с TLS, раскомментируйте `set_real_ip_from` в
-   [nginx.conf](../docker/nginx/nginx.conf), иначе rate limit будет считать все запросы с IP
+5. HTTPS ([ADR 0009](adr/0009-tls-letsencrypt-certbot.md)): DNS-запись `A` для `DOMAIN` указывает
+   на публичный IP VM, порты `80` и `443` открыты снаружи (группа безопасности облака, firewall
+   VM). Let's Encrypt проверяет домен запросом на `http://$DOMAIN/.well-known/acme-challenge/`.
+   Проверка после деплоя: `curl -I https://$DOMAIN/health/live`, а при проблемах —
+   `docker compose logs certbot`. Том `letsencrypt` не удаляйте: повторный выпуск ограничен
+   лимитами LE (5 одинаковых сертификатов в неделю).
+6. Если перед nginx появится балансировщик, который сам завершает TLS, верните прод на
+   HTTP-конфиг [nginx.conf](../docker/nginx/nginx.conf) и раскомментируйте `set_real_ip_from` в
+   [http.conf](../docker/nginx/http.conf), иначе rate limit будет считать все запросы с IP
    балансировщика.
 
 ## Локальная проверка перед MR

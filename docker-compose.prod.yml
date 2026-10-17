@@ -2,9 +2,10 @@
 # Required in $DEPLOY_DIR/.env on the server (written by the deploy job from CI variables,
 # never committed):
 #   POSTGRES_USER, POSTGRES_PASSWORD, POSTGRES_DB, AUTH__SECRET_KEY (>= 32 random chars),
-#   CORS_ORIGINS; optionally RATE_LIMIT__API_PER_MINUTE, RATE_LIMIT__AUTH_PER_MINUTE.
+#   CORS_ORIGINS, DOMAIN (public name for the TLS certificate), optionally CERTBOT_EMAIL,
+#   RATE_LIMIT__API_PER_MINUTE, RATE_LIMIT__AUTH_PER_MINUTE.
 # Provided by the deploy job: IMAGE (registry path), IMAGE_TAG (git short sha).
-# The deploy job also copies docker/nginx/ next to this file.
+# The deploy job also copies docker/nginx/ and docker/certbot/ next to this file.
 x-app: &app
   image: ${IMAGE:?IMAGE is required}:${IMAGE_TAG:?IMAGE_TAG is required}
   environment:
@@ -69,18 +70,48 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  # Let's Encrypt certificate for $DOMAIN via the webroot that nginx serves on :80 (ADR 0009):
+  # a self-signed placeholder first, then issuance and a renewal check every 12 hours.
+  certbot:
+    image: certbot/certbot:v5.8.0
+    entrypoint: ["/bin/sh", "/opt/certbot.sh"]
+    init: true  # sh as PID 1 would ignore SIGTERM during `sleep`
+    environment:
+      DOMAIN: ${DOMAIN:?DOMAIN is required}
+      CERTBOT_EMAIL: ${CERTBOT_EMAIL:-}
+    volumes:
+      - ./certbot/certbot.sh:/opt/certbot.sh:ro
+      - letsencrypt:/etc/letsencrypt
+      - acme-webroot:/var/www/certbot
+      - tls:/tls
+    healthcheck:
+      test: ["CMD", "test", "-s", "/tls/fullchain.pem"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    restart: unless-stopped
+
   nginx:
     image: nginx:1.30.5-alpine3.24
-    ports: ["80:80"]
-    # Reaches the frontend published on the host (:3000), see docker/nginx/nginx.conf.
+    entrypoint: ["/bin/sh", "/etc/nginx/tls-entrypoint.sh"]
+    ports: ["80:80", "443:443"]
+    # Reaches the frontend published on the host (:3000), see docker/nginx/http.conf.
     extra_hosts: ["host.docker.internal:host-gateway"]
     volumes:
-      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/nginx.prod.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/http.conf:/etc/nginx/http.conf:ro
+      - ./nginx/routes.conf:/etc/nginx/routes.conf:ro
+      - ./nginx/tls-entrypoint.sh:/etc/nginx/tls-entrypoint.sh:ro
+      - acme-webroot:/var/www/certbot:ro
+      - tls:/etc/nginx/tls:ro
     depends_on:
       api:
         condition: service_healthy
+      certbot:
+        condition: service_healthy
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://127.0.0.1/health/live"]
+      # Over TLS, as clients see it; the placeholder certificate is not trusted, hence no check.
+      test: ["CMD", "wget", "-qO-", "--no-check-certificate", "https://127.0.0.1/health/live"]
       interval: 5s
       timeout: 3s
       retries: 10
@@ -88,3 +119,6 @@ services:
 
 volumes:
   pg-data:
+  letsencrypt:  # certbot account and certificates: keep it, re-issuing is rate-limited
+  acme-webroot:
+  tls:

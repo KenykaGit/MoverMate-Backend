@@ -9,6 +9,7 @@
 | `GET /metrics` | Prometheus, только изнутри сети (nginx отдаёт 404) | тренды и алерты |
 | логи api (stdout, JSON) | `docker compose logs api` | разбор конкретного запроса |
 | логи nginx (stdout, JSON) | `docker compose logs nginx` | что видел клиент, время апстрима |
+| логи certbot (прод) | `docker compose logs certbot` | выпуск и продление сертификата |
 
 ### `/health/ready`
 
@@ -84,6 +85,22 @@ SQLAlchemy) проходят через один конвейер. Каждая 
   (`service_unavailable`).
 - `request_time` намного больше `upstream_response_time`: тормозит клиент или сеть, а не api.
 
+### Сертификат (прод)
+
+Скрипты certbot и nginx пишут в stderr строки с префиксом, не JSON
+([ADR 0009](adr/0009-tls-letsencrypt-certbot.md)):
+
+| Строка | Где | Значение |
+|---|---|---|
+| `certbot.sh: no certificate yet, writing a self-signed placeholder` | certbot | первый запуск: nginx стартует на заглушке |
+| `certbot.sh: waiting for nginx to serve the ACME webroot` | certbot | nginx ещё не поднялся; к Let's Encrypt не обращаемся |
+| `certbot.sh: installed the certificate for <domain>` | certbot | выпущен или продлён сертификат, nginx подхватит его в течение минуты |
+| **`certbot.sh: issuance failed (...), retrying in 1h`** | certbot | выпуск или продление не удались: проверьте DNS и доступность `:80` снаружи; причина — в строках certbot выше |
+| `tls-entrypoint: certificate changed, reloading nginx` | nginx | nginx перечитал сертификат |
+
+Срок действия: `echo | openssl s_client -connect $DOMAIN:443 -servername $DOMAIN 2>/dev/null | openssl x509 -noout -issuer -enddate`.
+Издатель `CN=<domain>` вместо Let's Encrypt означает, что всё ещё отдаётся заглушка.
+
 ## Как локализовать сбой
 
 1. **Клиент получил ошибку.** Возьмите `request_id` из тела ответа или заголовка и выполните
@@ -103,3 +120,6 @@ SQLAlchemy) проходят через один конвейер. Каждая 
    клиента (параллельные refresh), чем атака.
 6. **Подозрение на рассинхрон версий.** `version` в `/health/ready` должна совпадать с
    коммитом в GitLab.
+7. **Клиенты жалуются на сертификат.** Проверьте издателя и срок командой выше, затем
+   `docker compose logs certbot`: `issuance failed` чаще всего означает, что DNS домена не
+   указывает на VM или `:80` закрыт снаружи.

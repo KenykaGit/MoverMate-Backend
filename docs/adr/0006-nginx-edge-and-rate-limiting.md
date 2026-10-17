@@ -54,8 +54,19 @@ Rate limit по IP бессмысленен, если клиент может п
 - `/metrics` по-прежнему закрыт (404).
 
 Последствия: новый маршрут api вне `/api`, `/health` и документации нужно добавить в regex
-`location` в [nginx.conf](../../docker/nginx/nginx.conf), иначе его перехватит фронтенд. Адрес
+`location` в [routes.conf](../../docker/nginx/routes.conf), иначе его перехватит фронтенд. Адрес
 фронтенда резолвится при старте nginx, поэтому имя `host.docker.internal` должно быть
 в `extra_hosts` (job `nginx` в CI добавляет его в `/etc/hosts`). Пока фронтенд не запущен,
 запросы к `/` получают JSON 503 `service_unavailable`, а api продолжает работать. Порт `3000`
 остаётся открытым на хосте: закройте его на уровне сети VM, если нужен только вход через `:80`.
+
+## Пересмотр 2026-10-17: TLS завершает nginx
+
+Внешнего балансировщика на прод-VM нет, поэтому в проде nginx сам завершает TLS на `:443`
+с сертификатом Let's Encrypt, а `:80` отдаёт ACME challenge и `308` на https. Подробности и
+альтернативы — в [ADR 0009](0009-tls-letsencrypt-certbot.md). Конфиг разделён: общие части в
+[http.conf](../../docker/nginx/http.conf) и [routes.conf](../../docker/nginx/routes.conf),
+точки входа — [nginx.conf](../../docker/nginx/nginx.conf) (локально и CI, HTTP) и
+[nginx.prod.conf](../../docker/nginx/nginx.prod.conf) (прод, HTTPS). Остальная часть решения не
+меняется: `X-Forwarded-For` по-прежнему перезаписывается значением `$remote_addr`, а
+`X-Forwarded-Proto` теперь равен `https`.

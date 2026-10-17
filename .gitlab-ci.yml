@@ -105,6 +105,12 @@ nginx:
     # The frontend upstream is resolved at config load; compose provides this name via extra_hosts.
     - echo "127.0.0.1 host.docker.internal" >> /etc/hosts
     - nginx -t -c "$CI_PROJECT_DIR/docker/nginx/nginx.conf"
+    # The prod config needs a certificate to load: a throwaway one, like certbot's placeholder.
+    - apk add --no-cache openssl
+    - mkdir -p /etc/nginx/tls
+    - openssl req -x509 -nodes -newkey rsa:2048 -days 1 -subj /CN=ci
+        -keyout /etc/nginx/tls/privkey.pem -out /etc/nginx/tls/fullchain.pem
+    - nginx -t -c "$CI_PROJECT_DIR/docker/nginx/nginx.prod.conf"
 
 .build:image:
   extends: .dp_build
@@ -142,16 +148,20 @@ deploy:
   script:
     - !reference [.configure_docker, script]
     - |
-      tsh ssh "${DEPLOY_SSH_USER}@${DEPLOY_VM}" "sudo install -d -o '${DEPLOY_SSH_USER}' '${DEPLOY_DIR}' '${DEPLOY_DIR}/nginx'"
+      tsh ssh "${DEPLOY_SSH_USER}@${DEPLOY_VM}" "sudo install -d -o '${DEPLOY_SSH_USER}' '${DEPLOY_DIR}' '${DEPLOY_DIR}/nginx' '${DEPLOY_DIR}/certbot'"
       tsh scp docker-compose.prod.yml "${DEPLOY_SSH_USER}@${DEPLOY_VM}:${DEPLOY_DIR}/docker-compose.yml"
-      tsh scp docker/nginx/nginx.conf "${DEPLOY_SSH_USER}@${DEPLOY_VM}:${DEPLOY_DIR}/nginx/nginx.conf"
+      tsh scp docker/nginx/nginx.prod.conf docker/nginx/http.conf docker/nginx/routes.conf docker/nginx/tls-entrypoint.sh \
+        "${DEPLOY_SSH_USER}@${DEPLOY_VM}:${DEPLOY_DIR}/nginx/"
+      tsh scp docker/certbot/certbot.sh "${DEPLOY_SSH_USER}@${DEPLOY_VM}:${DEPLOY_DIR}/certbot/certbot.sh"
     # App secrets live in CI variables; the VM gets a 600 .env (rewritten on every deploy) so
     # that manual `docker compose` calls on the server work. Values travel over stdin only.
     - |
       : "${POSTGRES_USER:?set POSTGRES_USER}" "${POSTGRES_DB:?set POSTGRES_DB}"
       : "${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}" "${AUTH__SECRET_KEY:?set AUTH__SECRET_KEY}"
-      printf "POSTGRES_USER='%s'\nPOSTGRES_PASSWORD='%s'\nPOSTGRES_DB='%s'\nAUTH__SECRET_KEY='%s'\nCORS_ORIGINS='%s'\n" \
-        "$POSTGRES_USER" "$POSTGRES_PASSWORD" "$POSTGRES_DB" "$AUTH__SECRET_KEY" "${CORS_ORIGINS:-[]}" |
+      : "${DOMAIN:?set DOMAIN}"
+      printf "POSTGRES_USER='%s'\nPOSTGRES_PASSWORD='%s'\nPOSTGRES_DB='%s'\nAUTH__SECRET_KEY='%s'\nCORS_ORIGINS='%s'\nDOMAIN='%s'\nCERTBOT_EMAIL='%s'\n" \
+        "$POSTGRES_USER" "$POSTGRES_PASSWORD" "$POSTGRES_DB" "$AUTH__SECRET_KEY" "${CORS_ORIGINS:-[]}" \
+        "$DOMAIN" "${CERTBOT_EMAIL:-}" |
         tsh ssh "${DEPLOY_SSH_USER}@${DEPLOY_VM}" "umask 077 && cat > '${DEPLOY_DIR}/.env.new' && mv '${DEPLOY_DIR}/.env.new' '${DEPLOY_DIR}/.env'"
     - |
       tsh ssh "${DEPLOY_SSH_USER}@${DEPLOY_VM}" "sudo bash -s" <<EOF
@@ -162,11 +172,14 @@ deploy:
       # The script arrives on stdin (`bash -s`): commands that read stdin would swallow the
       # rest of it and bash would exit 0 early, so detach them with -T and </dev/null.
       docker compose run --rm -T migrate </dev/null
-      docker compose up -d --wait api nginx
+      docker compose up -d --wait api certbot nginx
       docker compose exec -T nginx sh -c 'nginx -t && nginx -s reload' </dev/null
       for i in 1 2 3 4 5 6 7 8 9 10; do
-        if curl -fsS http://127.0.0.1/health/ready | grep -q '"version":"${IMAGE_TAG}"'; then
+        # -k: right after the first deploy nginx may still serve the self-signed placeholder.
+        if curl -fsSk https://127.0.0.1/health/ready | grep -q '"version":"${IMAGE_TAG}"'; then
           echo "deployed ${IMAGE_TAG}"
+          curl -fsS -o /dev/null --resolve '${DOMAIN}:443:127.0.0.1' 'https://${DOMAIN}/health/live' ||
+            echo "warning: no trusted certificate for ${DOMAIN} yet, see: docker compose logs certbot"
           exit 0
         fi
         sleep 3
