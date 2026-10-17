@@ -22,9 +22,12 @@ from app.application.exceptions import (
     InvalidRefreshTokenError,
     NotAuthenticatedError,
     NotFoundError,
+    ProjectNotFoundError,
     RequestInProgressError,
+    RoomNameTakenError,
     UsernameAlreadyTakenError,
     UserNotFoundError,
+    UserOwnsProjectsError,
 )
 from app.domain.common.errors import (
     DomainError,
@@ -51,6 +54,7 @@ from app.domain.projects.errors import (
     CannotRemoveOwnerError,
     InvalidAddressError,
     InvalidProjectNameError,
+    InvalidTimeZoneError,
     NotProjectOwnerError,
 )
 from app.domain.tasks.errors import (
@@ -93,6 +97,7 @@ ERROR_SPECS: dict[type[Exception], ErrorSpec] = {
         status.HTTP_422_UNPROCESSABLE_CONTENT, "invalid_project_name"
     ),
     InvalidAddressError: ErrorSpec(status.HTTP_422_UNPROCESSABLE_CONTENT, "invalid_address"),
+    InvalidTimeZoneError: ErrorSpec(status.HTTP_422_UNPROCESSABLE_CONTENT, "invalid_time_zone"),
     InvalidMovingReminderOffsetError: ErrorSpec(
         status.HTTP_422_UNPROCESSABLE_CONTENT, "invalid_moving_reminder_offset"
     ),
@@ -123,6 +128,9 @@ ERROR_SPECS: dict[type[Exception], ErrorSpec] = {
     NotFoundError: ErrorSpec(status.HTTP_404_NOT_FOUND, "not_found"),
     UserNotFoundError: ErrorSpec(status.HTTP_404_NOT_FOUND, "user_not_found"),
     UsernameAlreadyTakenError: ErrorSpec(status.HTTP_409_CONFLICT, "username_taken"),
+    ProjectNotFoundError: ErrorSpec(status.HTTP_404_NOT_FOUND, "project_not_found"),
+    UserOwnsProjectsError: ErrorSpec(status.HTTP_409_CONFLICT, "user_owns_projects"),
+    RoomNameTakenError: ErrorSpec(status.HTTP_409_CONFLICT, "room_name_taken"),
     InvalidCredentialsError: ErrorSpec(status.HTTP_401_UNAUTHORIZED, "invalid_credentials"),
     InvalidRefreshTokenError: ErrorSpec(status.HTTP_401_UNAUTHORIZED, "invalid_refresh_token"),
     NotAuthenticatedError: ErrorSpec(status.HTTP_401_UNAUTHORIZED, "not_authenticated"),

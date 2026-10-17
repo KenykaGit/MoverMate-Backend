@@ -14,7 +14,13 @@ from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, create_async_en
 from app.infrastructure.db.errors import violated_constraint
 from app.infrastructure.db.models import Base
 from tests.integration.conftest import alembic_config
-from tests.integration.migrations.rows import insert_user, row_id
+from tests.integration.migrations.rows import (
+    insert,
+    insert_notification,
+    insert_project,
+    insert_user,
+    row_id,
+)
 
 
 def test_single_head() -> None:
@@ -194,3 +200,70 @@ def test_upgrade_downgrade_upgrade_roundtrip(scratch_database_url: str) -> None:
 
     assert left == {"alembic_version"}
     assert rebuilt == {"alembic_version", *Base.metadata.tables}
+
+
+async def _seed_moving_day_reminders(database_url: str) -> str:
+    """A project reminding on the moving day (offset 0) and a week before."""
+    engine = create_async_engine(database_url)
+    async with engine.begin() as connection:
+        project = await insert_project(connection)
+        for days in (0, 7):
+            await insert(
+                connection, "project_reminders", {"project_id": project, "offset_days": days}
+            )
+            await insert_notification(
+                connection,
+                project,
+                type="MOVING_DATE_REMINDER",
+                task_id=None,
+                reminder_offset_days=days,
+            )
+    await engine.dispose()
+    return project
+
+
+async def _moving_reminder_state(database_url: str, project: str) -> dict[str, Any]:
+    engine = create_async_engine(database_url)
+    async with engine.connect() as connection:
+        offsets = await connection.scalars(
+            text("SELECT offset_days FROM project_reminders WHERE project_id = :p"), {"p": project}
+        )
+        statuses = await connection.execute(
+            text(
+                "SELECT reminder_offset_days, status FROM notifications "
+                "WHERE project_id = :p ORDER BY reminder_offset_days"
+            ),
+            {"p": project},
+        )
+        has_time_zone = await connection.scalar(
+            text(
+                "SELECT count(*) FROM information_schema.columns "
+                "WHERE table_name = 'projects' AND column_name = 'time_zone'"
+            )
+        )
+    await engine.dispose()
+    return {
+        "offsets": sorted(offsets),
+        "notifications": [tuple(row) for row in statuses],
+        "has_time_zone": bool(has_time_zone),
+    }
+
+
+def test_downgrade_0006_drops_moving_day_reminders(scratch_database_url: str) -> None:
+    """The old CHECK (1..365) cannot hold offset 0: those reminders go, their pending
+    notifications are cancelled, the rest survives."""
+    import asyncio  # noqa: PLC0415
+
+    config = alembic_config(scratch_database_url)
+    command.upgrade(config, "0006")
+    project = asyncio.run(_seed_moving_day_reminders(scratch_database_url))
+
+    command.downgrade(config, "0005")
+    state = asyncio.run(_moving_reminder_state(scratch_database_url, project))
+    command.upgrade(config, "head")
+
+    assert state == {
+        "offsets": [7],
+        "notifications": [(0, "CANCELLED"), (7, "PENDING")],
+        "has_time_zone": False,
+    }

@@ -51,6 +51,7 @@ async def insert_project(connection: AsyncConnection, **overrides: Any) -> str:
         "name": "Move",
         "moving_date": NOW.date(),
         "qr_code_strategy": "PROTECTED",
+        "time_zone": "Europe/Moscow",
         "is_active": True,
     } | overrides
     await insert(connection, "projects", values)

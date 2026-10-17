@@ -1,7 +1,7 @@
 from app.domain.common.ids import ProjectId, UserId
 from app.domain.common.reminders import MovingReminderOffset
 from app.domain.projects.entity import Project
-from app.domain.projects.value_objects import Address, ProjectName, QrCodeStrategy
+from app.domain.projects.value_objects import Address, ProjectName, QrCodeStrategy, TimeZone
 from app.infrastructure.db.models.project import (
     ProjectCollaboratorModel,
     ProjectModel,
@@ -22,6 +22,7 @@ class ProjectMapper:
             origin_address=_address(model.origin_address),
             destination_address=_address(model.destination_address),
             qr_code_strategy=QrCodeStrategy(model.qr_code_strategy),
+            time_zone=TimeZone(model.time_zone),
             member_ids={UserId(row.user_id) for row in model.collaborators},
             moving_reminders={MovingReminderOffset(row.offset_days) for row in model.reminders},
             is_active=model.is_active,
@@ -37,6 +38,7 @@ class ProjectMapper:
             origin_address=_text(project.origin_address),
             destination_address=_text(project.destination_address),
             qr_code_strategy=project.qr_code_strategy.value,
+            time_zone=project.time_zone.value,
             is_active=project.is_active,
             # Sorted: a stable order of rows, whatever the set iteration order.
             collaborators=[

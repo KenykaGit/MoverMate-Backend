@@ -45,7 +45,7 @@ client ──HTTPS──▶ nginx :443 ──▶ api (uvicorn, FastAPI) ──�
 | Слой | Что здесь | Чего здесь нет |
 |---|---|---|
 | `domain/` | `User`, `RefreshToken` (с `TokenFamilyId`); агрегаты переезда `Project`, `Room`, `Box`, `Item`, `Task`, `Notification`, `PushSubscription`, `AuditEntry`; Value Objects; `DomainError` | любые сторонние пакеты, ввод-вывод, время «сейчас» |
-| `application/` | use cases (`RegisterUser`, `Login`, `RefreshTokens`…), сервисы (`CredentialsVerifier`, `TokenPairIssuer`, `IdempotentExecutor`), порты в `interfaces/`, DTO, `exceptions.py` | FastAPI, SQLAlchemy, Redis, pydantic, structlog; логирование только через stdlib `logging` |
+| `application/` | use cases (`RegisterUser`, `Login`, `RefreshTokens`, `CreateProject`…), сервисы (`CredentialsVerifier`, `TokenPairIssuer`, `IdempotentExecutor`, `MovingReminderScheduler`), порты в `interfaces/`, DTO, `exceptions.py` | FastAPI, SQLAlchemy, Redis, pydantic, structlog; логирование только через stdlib `logging` |
 | `infrastructure/` | ORM-модели, мапперы, репозитории, UoW, адаптеры Redis, argon2/JWT, метрики, настройка логов | бизнес-правила, HTTP |
 | `presentation/` | роуты (`DishkaRoute`), pydantic-схемы (только форма запроса), контракт ошибок, `RequestContextMiddleware`, rate limit, `CurrentUser` | SQL, Redis, хэширование (только через порты) |
 | `ioc/` | провайдеры Dishka: какой адаптер реализует какой порт и в каком scope | логика |
@@ -72,16 +72,24 @@ client ──HTTPS──▶ nginx :443 ──▶ api (uvicorn, FastAPI) ──�
 
 - Каждый сценарий — класс с `async def __call__(self, dto) -> ResultDTO`. Use case сам
   вызывает `await uow.commit()`. Сервисы (`TokenPairIssuer`, `CredentialsVerifier`,
-  `IdempotentExecutor`) и хелперы (`lookup.py`) только готовят изменения и никогда не
-  коммитят. Это проверяет AST-тест.
-- Порты (`application/interfaces/`) — абстрактные классы: репозитории, хэшер, токены,
-  rate limiter, хранилище идемпотентности, health probe.
+  `IdempotentExecutor`, `MovingReminderScheduler`) и хелперы (`lookup.py`) только готовят
+  изменения и никогда не коммитят. Это проверяет AST-тест.
+- Порты (`application/interfaces/`) — абстрактные классы: репозитории (пользователи, токены,
+  проекты, комнаты, уведомления, журнал), модель чтения `AbstractProjectReader`, хэшер,
+  токены, rate limiter, хранилище идемпотентности, health probe.
 - `application/common` — общие механизмы без бизнес-смысла: часы, UoW, пагинация
-  (`PageRequest`/`Page`) и идемпотентность (`IdempotentExecutor`). Пагинацию и
-  идемпотентность сейчас не использует ни один эндпоинт: они ждут первого бизнес-модуля и
-  проверены unit-тестами и тестовым маршрутом в интеграционных тестах.
-- Фичи `users`, `auth`, `health` независимы. Исключение одно: `auth` может
+  (`PageRequest`/`Page`), идемпотентность (`IdempotentExecutor`) и `Patch`/`UNSET` для
+  частичных обновлений. Идемпотентность использует `POST /projects`; пагинация ждёт длинных
+  списков и проверена unit-тестами и тестовым маршрутом в интеграционных тестах.
+- Фичи `users`, `auth`, `health`, `projects` независимы. Исключение одно: `auth` может
   использовать `users` (`AuthenticateUser` вызывает `GetUser`).
+- **Проекты** ([ADR 0010](adr/0010-projects-api.md)). Изменяющий use case берёт проект с
+  блокировкой строки (`get_by_id(for_update=True)`) через `get_member_project_or_raise`:
+  не-участник получает тот же `ProjectNotFoundError`, что и для несуществующего проекта.
+  Изменения идут через агрегат и репозиторий, ответ после коммита читает
+  `AbstractProjectReader` (username владельца, `created_at`/`updated_at` из БД).
+  Напоминания о переезде (`MovingReminderScheduler`) ставятся в outbox `notifications` в той
+  же транзакции на 09:00 по `time_zone` проекта.
 
 ## Поток запроса
 
@@ -100,8 +108,8 @@ client ──HTTPS──▶ nginx :443 ──▶ api (uvicorn, FastAPI) ──�
    Удалённый пользователь сразу получает 401.
 6. **`ChangeUsername`**: `Username(...)` (валидация и нормализация) → `user.change_username` →
    `repo.update` (flush в `SAVEPOINT`, конфликт → `UsernameAlreadyTakenError`) → `uow.commit()`.
-7. Небезопасный эндпоинт, которому нужны повторы без дублей, оборачивает use case в
-   `IdempotentExecutor.run(...)` (`run_idempotent` в presentation). Ключ ставится в `pending`
+7. Небезопасный эндпоинт, которому нужны повторы без дублей (сейчас `POST /projects`),
+   оборачивает use case в `IdempotentExecutor.run(...)` (`run_idempotent` в presentation). Ключ ставится в `pending`
    (`SET NX`), после успеха сохраняется JSON ответа (`completed`, 24 ч), при исключении ключ
    удаляется.
 8. Ошибки любого слоя превращаются в `{"error": {...}}` в `presentation/http/errors.py`.
@@ -111,7 +119,7 @@ client ──HTTPS──▶ nginx :443 ──▶ api (uvicorn, FastAPI) ──�
 | Провайдер | Scope | Что предоставляет |
 |---|---|---|
 | `ConfigProvider` | APP | `Settings` (из контекста) и его секции, `RefreshTokenSettings`, `HttpSettings`, `RateLimitPolicy` |
-| `DatabaseProvider` | APP / REQUEST | `AsyncEngine`, `async_sessionmaker`, `DatabaseHealthProbe` / `AsyncSession`, `AbstractUnitOfWork`, репозитории |
+| `DatabaseProvider` | APP / REQUEST | `AsyncEngine`, `async_sessionmaker`, `DatabaseHealthProbe` / `AsyncSession`, `AbstractUnitOfWork`, репозитории, `AbstractProjectReader` |
 | `RedisProvider` | APP | `Redis` (пул соединений), `AbstractIdempotencyStore`, `AbstractRateLimiter`, `RedisHealthProbe` |
 | `SecurityProvider` | APP | `AbstractPasswordHasher` (argon2id), `AbstractAccessTokenService` (JWT), `AbstractRefreshTokenGenerator` |
 | `UseCaseProvider` | REQUEST | все use cases и сервисы приложения |
@@ -131,7 +139,8 @@ client ──HTTPS──▶ nginx :443 ──▶ api (uvicorn, FastAPI) ──�
 (ставят БД и ORM, домен его не хранит); [0004](../migrations/versions/0004_moving_domain_tables.py)
 создаёт таблицы домена переезда; [0005](../migrations/versions/0005_task_phase_box_title_and_fragility_.py)
 добавляет этап задачи, описание и «хрупкое» у коробки и напоминания о дате переезда (сверка
-с фронтендом). Полный список ограничений — в
+с фронтендом); [0006](../migrations/versions/0006_project_time_zone_and_moving_day_reminder.py)
+добавляет `projects.time_zone` и разрешает напоминание в день переезда (смещение 0). Полный список ограничений — в
 [db-design.md](db-design.md#11-индексы-и-ограничения). ORM ↔ домен переводят мапперы
 `infrastructure/db/mappers/`; дочерние строки агрегата (участники и напоминания проекта,
 ответственные и напоминания задачи) — связи `relationship(cascade="all, delete-orphan", lazy="selectin")`
@@ -142,7 +151,7 @@ client ──HTTPS──▶ nginx :443 ──▶ api (uvicorn, FastAPI) ──�
 |---|---|
 | `users` | частичный уникальный индекс `uq_users_username_active` `WHERE is_active`; CHECK `username = lower(username)` |
 | `refresh_tokens` | хранится только `token_hash` (SHA-256, CHECK длины 64, UNIQUE); `family_id` (сессия, индекс); `revoked_at`; FK на `users` с `ON DELETE CASCADE` |
-| `projects`, `project_collaborators`, `project_reminders` | CHECK `qr_code_strategy`; PK участника `(project_id, user_id)`; CHECK `offset_days BETWEEN 1 AND 365` |
+| `projects`, `project_collaborators`, `project_reminders` | CHECK `qr_code_strategy`; `time_zone varchar(64)`; PK участника `(project_id, user_id)`; CHECK `offset_days BETWEEN 0 AND 365` |
 | `rooms`, `boxes`, `items` | составные FK `(project_id, …)` не дают сослаться на объект другого проекта; частичные UNIQUE номера коробки и имени комнаты `WHERE is_active`; CHECK `(state = 'IN_BOX') = (box_id IS NOT NULL)`; триггеры переходов статуса коробки и состояния вещи; GIN FTS по `items.name` |
 | `tasks`, `task_collaborators`, `task_reminders` | CHECK `is_done = (done_at IS NOT NULL)`; CHECK `phase`; ответственный — составной FK на `project_collaborators` с `ON DELETE CASCADE`; CHECK `offset_hours BETWEEN 1 AND 8760` |
 | `notifications`, `push_subscriptions` | CHECK «тип ⇔ заполненные поля»; триггер «статус меняется только из `PENDING`»; частичные UNIQUE ожидающих напоминаний; UNIQUE `endpoint` |
@@ -152,7 +161,8 @@ client ──HTTPS──▶ nginx :443 ──▶ api (uvicorn, FastAPI) ──�
 
 | Объект | Состояния | Переходы | Где защищено |
 |---|---|---|---|
-| Пользователь | `active`, `deleted` (`is_active`) | регистрация → `active`; `SoftDeleteUser`: `active → deleted` (идемпотентно, все сессии отзываются); `RestoreUser`: `deleted → active` (409, если username уже занят) | методы `User`; частичные уникальные индексы `WHERE is_active`; CHECK нижнего регистра username |
+| Пользователь | `active`, `deleted` (`is_active`) | регистрация → `active`; `SoftDeleteUser`: `active → deleted` (идемпотентно, все сессии отзываются; 409, пока владеет активными проектами); `RestoreUser`: `deleted → active` (409, если username уже занят) | методы `User`; частичные уникальные индексы `WHERE is_active`; CHECK нижнего регистра username |
+| Проект | `active`, `deleted` (`is_active`) | создание → `active`; `DeleteProject`: `active → deleted` только владельцем (403), обратного перехода в API нет; удалённый проект для всех операций — 404 | `Project.soft_delete(by=...)`; репозиторий не возвращает неактивный проект; отмена ожидающих уведомлений в той же транзакции |
 | Коробка | `PACKING → PACKED → LOADED → DELIVERED → UNPACKED` | шаг вперёд или назад (`BOX_TRANSITIONS`); повтор текущего статуса — no-op; откат пишется в журнал отдельно | `Box.change_status`; в БД — CHECK значений и триггер `ck_boxes_status_transition`; гонки — условный `UPDATE … WHERE status = :expected` в репозитории |
 | Вещь | `TO_PACK`, `IN_BOX`, `TAKEN_OUT`, `LOST` | матрица `ITEM_TRANSITIONS` (db-design, 5.2); `box_id` только у `IN_BOX` | методы `Item`; в БД — CHECK `(state = 'IN_BOX') = (box_id IS NOT NULL)` и триггер `ck_items_state_transition` |
 | Задача | `open`, `done` (`done_at`) | `complete` / `reopen` идемпотентны; очистка срока удаляет напоминания | методы `Task`; в БД — CHECK `is_done = (done_at IS NOT NULL)` |
@@ -254,6 +264,17 @@ import-linter выразить не может:
   (например, формат username), уже сохранённая строка, которая им не отвечает, перестанет
   читаться. Ужесточение правил сопровождайте миграцией или скриптом, который находит и
   исправляет такие данные.
+- Уведомления только ставятся в очередь (`notifications`, `PENDING`): воркера отправки
+  (taskiq, [db-design.md](db-design.md#103-отправка)) пока нет, поэтому напоминания о
+  переезде никому не приходят.
+- Участие удалённого пользователя в проектах не удаляется, а скрывается из списка участников:
+  так `RestoreUser` возвращает его. Пока аккаунт удалён, он по-прежнему занимает строку в
+  `project_collaborators` и получает ставящиеся в очередь напоминания.
+- Через API открыты только проекты и участники. Комнаты создаются лишь вместе с проектом
+  (`POST /projects`); эндпоинтов комнат, коробок, вещей и задач пока нет, хотя домен и
+  таблицы для них готовы.
+- Явные `operationId` есть только у маршрутов проектов; у `auth` и `users` они сгенерированы
+  FastAPI, и SDK фронтенда получит для них длинные имена функций.
 - Миграция [0002](../migrations/versions/0002_drop_user_email.py) удаляет колонку `users.email`
   за один релиз, без expand/contract: код предыдущего релиза пишет в неё и на новой схеме не
   работает. Допустимо, пока шаблон не выкатывался на прод; иначе делите на два релиза (сначала

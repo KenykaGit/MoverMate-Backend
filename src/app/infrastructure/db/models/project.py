@@ -16,6 +16,7 @@ from app.domain.common.reminders import MOVING_REMINDER_MAX_DAYS, MOVING_REMINDE
 from app.domain.projects.value_objects import (
     ADDRESS_MAX_LENGTH,
     PROJECT_NAME_MAX_LENGTH,
+    TIME_ZONE_MAX_LENGTH,
     QrCodeStrategy,
 )
 from app.infrastructure.db.base import Base
@@ -35,6 +36,7 @@ class ProjectModel(Base):
     origin_address: Mapped[str | None] = mapped_column(String(ADDRESS_MAX_LENGTH))
     destination_address: Mapped[str | None] = mapped_column(String(ADDRESS_MAX_LENGTH))
     qr_code_strategy: Mapped[str] = mapped_column(String(ENUM_LENGTH))
+    time_zone: Mapped[str] = mapped_column(String(TIME_ZONE_MAX_LENGTH))
     is_active: Mapped[bool]
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(

@@ -9,7 +9,12 @@ from tests.fakes import (
     FakePasswordHasher,
     FakeRefreshTokenGenerator,
     FakeUnitOfWork,
+    InMemoryAuditLogRepository,
+    InMemoryNotificationRepository,
+    InMemoryProjectReader,
+    InMemoryProjectRepository,
     InMemoryRefreshTokenRepository,
+    InMemoryRoomRepository,
     InMemoryUserRepository,
 )
 
@@ -24,6 +29,33 @@ def users() -> InMemoryUserRepository:
 @pytest.fixture
 def refresh_tokens() -> InMemoryRefreshTokenRepository:
     return InMemoryRefreshTokenRepository()
+
+
+@pytest.fixture
+def projects() -> InMemoryProjectRepository:
+    return InMemoryProjectRepository()
+
+
+@pytest.fixture
+def project_reader(
+    projects: InMemoryProjectRepository, users: InMemoryUserRepository
+) -> InMemoryProjectReader:
+    return InMemoryProjectReader(projects, users)
+
+
+@pytest.fixture
+def rooms() -> InMemoryRoomRepository:
+    return InMemoryRoomRepository()
+
+
+@pytest.fixture
+def notifications() -> InMemoryNotificationRepository:
+    return InMemoryNotificationRepository()
+
+
+@pytest.fixture
+def audit_log() -> InMemoryAuditLogRepository:
+    return InMemoryAuditLogRepository()
 
 
 @pytest.fixture

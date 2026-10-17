@@ -18,7 +18,20 @@ type Schema = dict[str, Any]
 
 # Every operation is classified: a new endpoint fails test_every_operation_is_classified
 # until someone decides whether it needs a user.
+# Generated SDKs name their functions after operationId: these must not change.
+PROJECT_OPERATION_IDS = {
+    "GET /api/v1/projects": "listProjects",
+    "POST /api/v1/projects": "createProject",
+    "GET /api/v1/projects/{project_id}": "getProject",
+    "PATCH /api/v1/projects/{project_id}": "updateProject",
+    "DELETE /api/v1/projects/{project_id}": "deleteProject",
+    "PUT /api/v1/projects/{project_id}/reminders": "setProjectReminders",
+    "GET /api/v1/projects/{project_id}/collaborators": "listCollaborators",
+    "POST /api/v1/projects/{project_id}/collaborators": "addCollaborator",
+    "DELETE /api/v1/projects/{project_id}/collaborators/{user_id}": "removeCollaborator",
+}
 PROTECTED = {
+    *PROJECT_OPERATION_IDS,
     "GET /api/v1/users/me",
     "DELETE /api/v1/users/me",
     "PUT /api/v1/users/me/password",
@@ -83,14 +96,36 @@ def test_bearer_scheme_tells_where_tokens_come_from(schema: Schema) -> None:
     assert "/api/v1/auth/login" in bearer["description"]
 
 
+# Parameters a client really sends, besides the placeholders of the path itself.
+DECLARED_PARAMETERS = {
+    "POST /api/v1/projects": {("header", "idempotency-key")},
+}
+
+
 def test_injected_dependencies_do_not_leak_into_parameters(schema: Schema) -> None:
     """Use cases, rate limiter and settings come from Dishka; none of them may show
-    up as a query parameter a client would be asked to send."""
-    leaked = {
-        name: op["parameters"] for name, op in operations(schema).items() if "parameters" in op
-    }
+    up as a parameter a client would be asked to send."""
+    leaked = {}
+    for name, operation in operations(schema).items():
+        path = name.split(" ", maxsplit=1)[1]
+        unexpected = [
+            (p["in"], p["name"])
+            for p in operation.get("parameters", [])
+            if not (p["in"] == "path" and f"{{{p['name']}}}" in path)
+            and (p["in"], p["name"]) not in DECLARED_PARAMETERS.get(name, set())
+        ]
+        if unexpected:
+            leaked[name] = unexpected
 
     assert leaked == {}
+
+
+def test_project_operations_have_stable_ids(schema: Schema) -> None:
+    found = {name: operations(schema)[name].get("operationId") for name in PROJECT_OPERATION_IDS}
+    every_id = [op["operationId"] for op in operations(schema).values()]
+
+    assert found == PROJECT_OPERATION_IDS
+    assert len(every_id) == len(set(every_id))
 
 
 def test_only_real_parameters_are_published_with_injection() -> None:
@@ -122,11 +157,28 @@ def test_versioned_operations_document_the_error_contract(schema: Schema, name: 
         ("POST /api/v1/auth/login", "401"),
         ("POST /api/v1/auth/refresh", "401"),
         ("PUT /api/v1/users/me/username", "409"),
+        ("DELETE /api/v1/users/me", "409"),
+        ("POST /api/v1/projects", "409"),
+        ("GET /api/v1/projects/{project_id}", "404"),
+        ("PATCH /api/v1/projects/{project_id}", "404"),
+        ("DELETE /api/v1/projects/{project_id}", "403"),
+        ("DELETE /api/v1/projects/{project_id}", "404"),
+        ("PUT /api/v1/projects/{project_id}/reminders", "404"),
+        ("GET /api/v1/projects/{project_id}/collaborators", "404"),
+        ("POST /api/v1/projects/{project_id}/collaborators", "200"),
+        ("POST /api/v1/projects/{project_id}/collaborators", "404"),
+        ("DELETE /api/v1/projects/{project_id}/collaborators/{user_id}", "404"),
+        ("DELETE /api/v1/projects/{project_id}/collaborators/{user_id}", "409"),
         ("GET /health/ready", "503"),
     ],
 )
 def test_specific_error_statuses_are_documented(schema: Schema, name: str, status: str) -> None:
     assert status in operations(schema)[name]["responses"]
+
+
+def _is_named(body: Schema) -> bool:
+    """A named model, or an array of them (short lists are plain arrays)."""
+    return "$ref" in body or (body.get("type") == "array" and "$ref" in body.get("items", {}))
 
 
 def test_successful_responses_have_a_schema(schema: Schema) -> None:
@@ -136,7 +188,7 @@ def test_successful_responses_have_a_schema(schema: Schema) -> None:
         for name, operation in operations(schema).items()
         for status, response in operation["responses"].items()
         if status in {"200", "201"}
-        and "$ref" not in response.get("content", {}).get("application/json", {}).get("schema", {})
+        and not _is_named(response.get("content", {}).get("application/json", {}).get("schema", {}))
     ]
 
     assert untyped == []
@@ -151,3 +203,17 @@ def test_error_response_schema_matches_the_contract(schema: Schema) -> None:
 
 def test_title_and_version_come_from_the_settings(schema: Schema) -> None:
     assert (schema["info"]["title"], schema["info"]["version"]) == ("openapi-test", "9.9.9")
+
+
+def test_patch_fields_that_cannot_be_cleared_are_not_nullable(schema: Schema) -> None:
+    """Omitting a field keeps it; only the addresses accept null (clearing them)."""
+    properties = schema["components"]["schemas"]["UpdateProjectRequest"]["properties"]
+
+    nullable = {
+        name
+        for name, prop in properties.items()
+        if any(option.get("type") == "null" for option in prop.get("anyOf", []))
+    }
+
+    assert nullable == {"origin_address", "destination_address"}
+    assert "required" not in schema["components"]["schemas"]["UpdateProjectRequest"]

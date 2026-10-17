@@ -6,6 +6,7 @@ and the tests catch that.
 """
 
 import asyncio
+import copy
 from collections.abc import Callable, Iterable
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
@@ -13,9 +14,12 @@ from uuid import UUID
 
 from app.application.common.uow import AbstractUnitOfWork
 from app.application.exceptions import (
+    ProjectNotFoundError,
+    RoomNameTakenError,
     UsernameAlreadyTakenError,
     UserNotFoundError,
 )
+from app.application.interfaces.audit_log_repository import AbstractAuditLogRepository
 from app.application.interfaces.health import AbstractHealthProbe
 from app.application.interfaces.idempotency import (
     AbstractIdempotencyStore,
@@ -25,16 +29,30 @@ from app.application.interfaces.idempotency import (
     IdempotencyState,
     JsonValue,
 )
+from app.application.interfaces.notification_repository import AbstractNotificationRepository
 from app.application.interfaces.password_hasher import AbstractPasswordHasher
+from app.application.interfaces.project_reader import (
+    AbstractProjectReader,
+    CollaboratorDTO,
+    ProjectDTO,
+    UserRefDTO,
+)
+from app.application.interfaces.project_repository import AbstractProjectRepository
 from app.application.interfaces.rate_limiter import AbstractRateLimiter, RateLimitDecision
 from app.application.interfaces.refresh_token_repository import AbstractRefreshTokenRepository
+from app.application.interfaces.room_repository import AbstractRoomRepository
 from app.application.interfaces.tokens import (
     AbstractAccessTokenService,
     AbstractRefreshTokenGenerator,
     IssuedAccessToken,
 )
 from app.application.interfaces.user_repository import AbstractUserRepository
-from app.domain.common.ids import UserId
+from app.domain.audit.entity import AuditEntry
+from app.domain.common.ids import ProjectId, RoomId, UserId
+from app.domain.common.reminders import MovingReminderOffset
+from app.domain.inventory.room import Room
+from app.domain.notifications.notification import MovingDateReminder, Notification
+from app.domain.projects.entity import Project
 from app.domain.tokens.entity import RefreshToken, RefreshTokenId, TokenFamilyId
 from app.domain.users.entity import User
 from app.domain.users.value_objects import PasswordHash, RawPassword, Username
@@ -251,3 +269,173 @@ class FakeHealthProbe(AbstractHealthProbe):
             await asyncio.Event().wait()
         if not self.healthy:
             raise ConnectionError("dependency is down")
+
+
+class InMemoryProjectRepository(AbstractProjectRepository):
+    """`projects` holds every project, soft-deleted ones included.
+
+    Like the database, it remembers when each member joined (`joined`), which
+    the reader fake reports as the collaborator's created_at.
+    """
+
+    def __init__(self, projects: Iterable[Project] = ()) -> None:
+        self.projects: dict[ProjectId, Project] = {}
+        self.joined: dict[tuple[ProjectId, UserId], datetime] = {}
+        self.locks = 0
+        for project in projects:
+            self._store(project)
+
+    async def add(self, project: Project) -> None:
+        self._store(project)
+
+    async def get_by_id(self, project_id: ProjectId, *, for_update: bool = False) -> Project | None:
+        project = self.projects.get(project_id)
+        if project is None or not project.is_active:
+            return None
+        self.locks += for_update
+        return copy.deepcopy(project)
+
+    async def update(self, project: Project) -> None:
+        if project.id not in self.projects:
+            raise ProjectNotFoundError(project.id)
+        self._store(project)
+
+    async def owns_active_projects(self, user_id: UserId) -> bool:
+        return any(p.is_active and p.owner_id == user_id for p in self.projects.values())
+
+    def _store(self, project: Project) -> None:
+        for member_id in project.member_ids:
+            # Strictly increasing join times: the order of joining is observable.
+            self.joined.setdefault(
+                (project.id, member_id), _FAKE_EPOCH + timedelta(seconds=len(self.joined))
+            )
+        for key in [key for key in self.joined if key[0] == project.id]:
+            if key[1] not in project.member_ids:
+                del self.joined[key]
+        self.projects[project.id] = copy.deepcopy(project)
+
+
+_FAKE_EPOCH = datetime(2026, 1, 1, tzinfo=UTC)
+
+
+class InMemoryProjectReader(AbstractProjectReader):
+    """Builds the read model from the repository fakes, like the SQL queries do."""
+
+    def __init__(self, projects: InMemoryProjectRepository, users: InMemoryUserRepository) -> None:
+        self._projects = projects
+        self._users = users
+
+    async def get(self, project_id: ProjectId, *, viewer_id: UserId) -> ProjectDTO | None:
+        project = self._projects.projects.get(project_id)
+        if project is None or not project.is_active or not project.is_member(viewer_id):
+            return None
+        return self._dto(project, viewer_id)
+
+    async def list_for_member(self, viewer_id: UserId) -> list[ProjectDTO]:
+        visible = [
+            p for p in self._projects.projects.values() if p.is_active and p.is_member(viewer_id)
+        ]
+        visible.sort(key=lambda p: (p.moving_date, p.id))
+        return [self._dto(project, viewer_id) for project in visible]
+
+    async def list_collaborators(self, project_id: ProjectId) -> list[CollaboratorDTO]:
+        project = self._projects.projects[project_id]
+        found = [
+            collaborator
+            for user_id in project.member_ids
+            if (collaborator := self._collaborator(project, user_id)) is not None
+        ]
+        found.sort(key=lambda c: (not c.is_owner, c.created_at, c.user.id))
+        return found
+
+    async def get_collaborator(
+        self, project_id: ProjectId, user_id: UserId
+    ) -> CollaboratorDTO | None:
+        project = self._projects.projects[project_id]
+        return self._collaborator(project, user_id) if project.is_member(user_id) else None
+
+    def _collaborator(self, project: Project, user_id: UserId) -> CollaboratorDTO | None:
+        user = self._users.users.get(user_id)
+        if user is None or not user.is_active:
+            return None
+        return CollaboratorDTO(
+            user=UserRefDTO(id=user.id, username=user.username.value),
+            is_owner=user_id == project.owner_id,
+            created_at=self._projects.joined[(project.id, user_id)],
+        )
+
+    def _dto(self, project: Project, viewer_id: UserId) -> ProjectDTO:
+        owner = self._users.users[project.owner_id]
+        created_at = self._projects.joined[(project.id, project.owner_id)]
+        return ProjectDTO(
+            id=project.id,
+            name=project.name.value,
+            moving_date=project.moving_date,
+            origin_address=None if project.origin_address is None else project.origin_address.value,
+            destination_address=(
+                None if project.destination_address is None else project.destination_address.value
+            ),
+            qr_code_strategy=project.qr_code_strategy,
+            time_zone=project.time_zone.value,
+            reminder_offsets_days=tuple(sorted(o.days for o in project.moving_reminders)),
+            owner=UserRefDTO(id=owner.id, username=owner.username.value),
+            is_owner=viewer_id == project.owner_id,
+            created_at=created_at,
+            updated_at=created_at,
+        )
+
+
+class InMemoryRoomRepository(AbstractRoomRepository):
+    def __init__(self) -> None:
+        self.rooms: dict[RoomId, Room] = {}
+
+    async def add(self, room: Room) -> None:
+        clash = any(
+            other.is_active
+            and other.project_id == room.project_id
+            and other.kind is room.kind
+            and other.name == room.name
+            for other in self.rooms.values()
+        )
+        if room.is_active and clash:
+            raise RoomNameTakenError(room.kind, room.name)
+        self.rooms[room.id] = replace(room)
+
+
+class InMemoryNotificationRepository(AbstractNotificationRepository):
+    def __init__(self) -> None:
+        self.notifications: list[Notification] = []
+
+    async def add(self, notification: Notification) -> None:
+        self.notifications.append(replace(notification))
+
+    async def cancel_pending(self, project_id: ProjectId, *, user_id: UserId | None = None) -> int:
+        return self._cancel(
+            lambda n: n.project_id == project_id and (user_id is None or n.user_id == user_id)
+        )
+
+    async def cancel_pending_moving_reminders(
+        self, project_id: ProjectId, *, offsets: Iterable[MovingReminderOffset] | None = None
+    ) -> int:
+        wanted = None if offsets is None else set(offsets)
+        return self._cancel(
+            lambda n: (
+                n.project_id == project_id
+                and isinstance(n.target, MovingDateReminder)
+                and (wanted is None or n.target.offset in wanted)
+            )
+        )
+
+    def pending(self) -> list[Notification]:
+        return [n for n in self.notifications if n.is_pending]
+
+    def _cancel(self, predicate: Callable[[Notification], bool]) -> int:
+        return sum(n.cancel() for n in self.notifications if predicate(n))
+
+
+class InMemoryAuditLogRepository(AbstractAuditLogRepository):
+    def __init__(self) -> None:
+        self.entries: list[AuditEntry] = []
+
+    async def add(self, entry: AuditEntry) -> None:
+        self.entries.append(entry)

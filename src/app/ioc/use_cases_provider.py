@@ -6,6 +6,16 @@ from app.application.auth.logout import Logout
 from app.application.auth.refresh_tokens import RefreshTokens
 from app.application.auth.services import CredentialsVerifier, TokenPairIssuer
 from app.application.common.idempotency import IdempotentExecutor
+from app.application.projects.add_collaborator import AddCollaborator
+from app.application.projects.create_project import CreateProject
+from app.application.projects.delete_project import DeleteProject
+from app.application.projects.get_project import GetProject
+from app.application.projects.list_collaborators import ListCollaborators
+from app.application.projects.list_projects import ListProjects
+from app.application.projects.remove_collaborator import RemoveCollaborator
+from app.application.projects.services import MovingReminderScheduler
+from app.application.projects.set_project_reminders import SetProjectReminders
+from app.application.projects.update_project import UpdateProject
 from app.application.users.change_password import ChangePassword
 from app.application.users.change_username import ChangeUsername
 from app.application.users.get_user import GetUser
@@ -20,7 +30,9 @@ class UseCaseProvider(Provider):
 
     scope = Scope.REQUEST
 
-    services = provide_all(CredentialsVerifier, TokenPairIssuer, IdempotentExecutor)
+    services = provide_all(
+        CredentialsVerifier, TokenPairIssuer, IdempotentExecutor, MovingReminderScheduler
+    )
 
     users = provide_all(
         RegisterUser,
@@ -31,3 +43,14 @@ class UseCaseProvider(Provider):
         RestoreUser,
     )
     auth = provide_all(Login, RefreshTokens, Logout, AuthenticateUser)
+    projects = provide_all(
+        CreateProject,
+        ListProjects,
+        GetProject,
+        UpdateProject,
+        DeleteProject,
+        SetProjectReminders,
+        ListCollaborators,
+        AddCollaborator,
+        RemoveCollaborator,
+    )

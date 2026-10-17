@@ -8,7 +8,7 @@ from app.domain.inventory.item import Item
 from app.domain.inventory.room import Room
 from app.domain.inventory.value_objects import BoxNumber, ItemName, RoomKind, RoomName
 from app.domain.projects.entity import Project
-from app.domain.projects.value_objects import ProjectName
+from app.domain.projects.value_objects import ProjectName, TimeZone
 from app.domain.tasks.entity import Task
 from app.domain.tasks.value_objects import TaskTitle
 from app.domain.tokens.entity import RefreshToken, TokenFamilyId, new_token_family
@@ -58,11 +58,17 @@ def make_refresh_token(
     return token
 
 
-def make_project(*, owner_id: UserId | None = None) -> Project:
+def make_project(
+    *,
+    owner_id: UserId | None = None,
+    moving_date: date = date(2026, 8, 1),
+    time_zone: str = "Europe/Moscow",
+) -> Project:
     return Project.create(
         owner_id=owner_id or UserId(new_id()),
         name=ProjectName("Moving to Kazan"),
-        moving_date=date(2026, 8, 1),
+        moving_date=moving_date,
+        time_zone=TimeZone(time_zone),
     )
 
 

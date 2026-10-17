@@ -33,7 +33,7 @@ unit-тестами.
 | `redis_errors_total` | `op` (`rate_limit`, `idempotency_begin`…) | любой рост означает работу в деградированном режиме |
 | `rate_limited_total` | `scope=api\|auth` | клиенты упираются в лимит; рост `auth` — признак перебора паролей |
 
-`route` — шаблон пути (`/api/v1/items/{item_id}`, а не сам id), поэтому кардинальность ограничена.
+`route` — шаблон пути (`/api/v1/projects/{project_id}`, а не сам id), поэтому кардинальность ограничена.
 Несуществующие пути схлопываются в `route="unmatched"`.
 
 Примеры запросов PromQL:
@@ -68,6 +68,13 @@ SQLAlchemy) проходят через один конвейер. Каждая 
 | `login_failed` | info | `reason=unknown_login\|wrong_password` | без имени пользователя и пароля: опечатка в поле имени пользователя могла бы оказаться паролем |
 | **`refresh_token_reused`** | **warning** | `user_id`, `family_id`, `token_id` | возможна кража сессии; эта сессия (семья токенов) отозвана, остальные работают |
 | `password_changed`, `user_deleted`, `user_restored` | info | `user_id` | аудит |
+| `project_created` | info | `project_id`, `user_id`, `rooms` | создан проект и `rooms` комнат |
+| `project_rescheduled` | info | `project_id`, `moving_date` | сменились дата переезда или часовой пояс; ожидающие напоминания пересозданы |
+| `project_reminders_changed` | info | `project_id`, `offsets_days` | новый набор напоминаний о переезде (повтор того же набора не пишется) |
+| `project_deleted` | info | `project_id`, `user_id`, `cancelled_notifications` | проект удалён, столько ожидающих уведомлений отменено |
+| **`project_delete_forbidden`** | **warning** | `project_id`, `user_id` | участник, не владелец, пытался удалить проект (403); серия таких событий — ошибка клиента или попытка злоупотребления |
+| `collaborator_added` | info | `project_id`, `user_id`, `collaborator_id` | `user_id` добавил участника (повторное добавление не пишется) |
+| `collaborator_removed`, `project_left` | info | `project_id`, `user_id`, `collaborator_id` | участник убран другим участником / вышел сам; его ожидающие уведомления в проекте отменены |
 | `redis_unavailable` | warning | `op`, `error` | операция Redis не удалась, сработал fail-open |
 | `readiness_check_failed` | warning | `dependency`, `error` | зависимость не прошла проверку `/health/ready` |
 | `idempotency_record_corrupted` | warning | ключ | запись в Redis не читается (например, после смены формата) |
@@ -118,8 +125,13 @@ SQLAlchemy) проходят через один конвейер. Каждая 
    клиент повторил запрос после сетевой ошибки. Сессия `family_id` уже отозвана, на этом
    устройстве нужно войти заново. Много таких событий у одного клиента — скорее ошибка
    клиента (параллельные refresh), чем атака.
-6. **Подозрение на рассинхрон версий.** `version` в `/health/ready` должна совпадать с
+6. **Пользователь не видит проект или не получил напоминание.** 404 `project_not_found`
+   одинаков для «нет проекта» и «не участник»: ищите по `project_id` события
+   `collaborator_removed`/`project_left` и `project_deleted`. Сдвиг напоминаний после смены
+   даты или пояса виден по `project_rescheduled`. Уведомления пока только ставятся в очередь
+   (таблица `notifications`, статус `PENDING`): воркера отправки нет.
+7. **Подозрение на рассинхрон версий.** `version` в `/health/ready` должна совпадать с
    коммитом в GitLab.
-7. **Клиенты жалуются на сертификат.** Проверьте издателя и срок командой выше, затем
+8. **Клиенты жалуются на сертификат.** Проверьте издателя и срок командой выше, затем
    `docker compose logs certbot`: `issuance failed` чаще всего означает, что DNS домена не
    указывает на VM или `:80` закрыт снаружи.

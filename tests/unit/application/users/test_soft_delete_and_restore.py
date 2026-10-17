@@ -1,10 +1,19 @@
 import pytest
 
-from app.application.exceptions import UsernameAlreadyTakenError, UserNotFoundError
+from app.application.exceptions import (
+    UsernameAlreadyTakenError,
+    UserNotFoundError,
+    UserOwnsProjectsError,
+)
 from app.application.users.restore_user import RestoreUser
 from app.application.users.soft_delete_user import SoftDeleteUser
-from tests.factories import make_refresh_token, make_user
-from tests.fakes import FakeUnitOfWork, InMemoryRefreshTokenRepository, InMemoryUserRepository
+from tests.factories import make_project, make_refresh_token, make_user
+from tests.fakes import (
+    FakeUnitOfWork,
+    InMemoryProjectRepository,
+    InMemoryRefreshTokenRepository,
+    InMemoryUserRepository,
+)
 
 
 class TestSoftDelete:
@@ -13,9 +22,10 @@ class TestSoftDelete:
         self,
         users: InMemoryUserRepository,
         refresh_tokens: InMemoryRefreshTokenRepository,
+        projects: InMemoryProjectRepository,
         uow: FakeUnitOfWork,
     ) -> SoftDeleteUser:
-        return SoftDeleteUser(users, refresh_tokens, uow)
+        return SoftDeleteUser(users, refresh_tokens, projects, uow)
 
     async def test_deactivates_and_ends_every_session(
         self,
@@ -45,6 +55,48 @@ class TestSoftDelete:
         await delete(make_user().id)  # never existed
 
         assert uow.commits == 1
+
+    async def test_owner_of_active_projects_must_delete_them_first(
+        self,
+        delete: SoftDeleteUser,
+        users: InMemoryUserRepository,
+        refresh_tokens: InMemoryRefreshTokenRepository,
+        projects: InMemoryProjectRepository,
+        uow: FakeUnitOfWork,
+    ) -> None:
+        user = make_user()
+        await users.add(user)
+        await refresh_tokens.add(make_refresh_token(user.id))
+        project = make_project(owner_id=user.id)
+        await projects.add(project)
+
+        with pytest.raises(UserOwnsProjectsError):
+            await delete(user.id)
+        assert users.users[user.id].is_active
+        assert len(refresh_tokens.active_for(user.id)) == 1
+        assert uow.commits == 0
+
+        project.soft_delete(by=user.id)
+        await projects.update(project)
+        await delete(user.id)
+        assert users.users[user.id].is_active is False
+
+    async def test_membership_in_other_projects_does_not_block(
+        self,
+        delete: SoftDeleteUser,
+        users: InMemoryUserRepository,
+        projects: InMemoryProjectRepository,
+    ) -> None:
+        user = make_user()
+        await users.add(user)
+        project = make_project()
+        project.add_member(user.id)
+        await projects.add(project)
+
+        await delete(user.id)
+
+        assert users.users[user.id].is_active is False
+        assert projects.projects[project.id].is_member(user.id)  # kept for a restore
 
 
 class TestRestore:

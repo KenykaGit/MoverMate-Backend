@@ -79,7 +79,7 @@ make run         # uvicorn с автоперезагрузкой на :8000
 
 ```text
 src/app/
-├── domain/          чистый Python: сущности, Value Objects (users, tokens)
+├── domain/          чистый Python: сущности, Value Objects (users, tokens, projects, inventory, tasks…)
 ├── application/     use cases, порты (interfaces/), DTO, исключения; только stdlib
 ├── infrastructure/  адаптеры: SQLAlchemy, Redis (fail-open), argon2/JWT, Prometheus, structlog
 ├── presentation/    FastAPI: роуты (DishkaRoute), схемы, контракт ошибок, middleware
@@ -129,7 +129,7 @@ tests/
 - [docs/api.md](docs/api.md): эндпоинты, формат ошибок, идемпотентность, rate limit
 - [docs/observability.md](docs/observability.md): метрики, логи, health checks, разбор инцидентов
 - [docs/release.md](docs/release.md): выпуск, правила миграций, обновление версий, откат
-- [docs/adr/](docs/adr/): архитектурные решения 0001–0008
+- [docs/adr/](docs/adr/): архитектурные решения 0001–0010
 
 ## Как шаблон закрывает критерии жюри (backend)
 
@@ -141,7 +141,7 @@ tests/
 | API и серверные контракты | [docs/api.md](docs/api.md), единый формат ошибок в [errors.py](src/app/presentation/http/errors.py) (и у nginx), `/docs`; тесты контракта: [test_openapi.py](tests/unit/presentation/test_openapi.py), [test_error_contract.py](tests/unit/presentation/test_error_contract.py) |
 | Архитектура сервиса | [docs/architecture.md](docs/architecture.md#слои), [ADR 0001](docs/adr/0001-clean-architecture-and-ddd.md), [ADR 0002](docs/adr/0002-dishka-ioc.md); границы проверяют [.importlinter](.importlinter), [test_architecture.py](tests/unit/test_architecture.py) и [тесты контейнера](tests/unit/ioc/test_container_wiring.py) |
 | Архитектура системы | [docs/architecture.md](docs/architecture.md#система), [docker-compose.yml](docker-compose.yml), [nginx.conf](docker/nginx/nginx.conf), [ADR 0003](docs/adr/0003-postgres-and-redis-fail-open.md), [ADR 0006](docs/adr/0006-nginx-edge-and-rate-limiting.md) |
-| Архитектурные компромиссы и ограничения | [docs/adr/](docs/adr/) (0001–0008, у каждого раздел «Альтернативы»), [известные ограничения](docs/architecture.md#известные-ограничения) |
+| Архитектурные компромиссы и ограничения | [docs/adr/](docs/adr/) (0001–0010, у каждого раздел «Альтернативы»), [известные ограничения](docs/architecture.md#известные-ограничения) |
 | Безопасное добавление изменений | обязательная стадия `check` в [.gitlab-ci.yml](.gitlab-ci.yml), pre-commit с unit-тестами, `make check`; 400+ тестов в [tests/](tests/) |
 | Выпуск изменений и обновление схемы | [docs/release.md](docs/release.md) (путь до прода, откат, обновление версий), [ADR 0005](docs/adr/0005-migrations.md), [migrations/](migrations/), сервис `migrate` и job `deploy` |
 | Модель данных и переходы состояний | [состояния и переходы](docs/architecture.md#состояния-и-переходы), [сущности](src/app/domain/), ограничения БД в [0001_initial.py](migrations/versions/0001_initial.py), [ADR 0007](docs/adr/0007-authentication-and-sessions.md), [ADR 0008](docs/adr/0008-soft-delete-and-savepoints.md), [test_migrations.py](tests/integration/migrations/test_migrations.py) |

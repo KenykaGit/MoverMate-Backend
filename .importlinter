@@ -55,6 +55,7 @@ modules =
     app.application.users
     app.application.auth
     app.application.health
+    app.application.projects
 ignore_imports =
     app.application.auth.** -> app.application.users.**
 

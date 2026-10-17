@@ -22,12 +22,22 @@
 | GET | `/api/v1/users/me` | 200 `UserResponse` | 401 |
 | PUT | `/api/v1/users/me/password` `{current_password, new_password}` | 204, все сессии завершены | 401 `invalid_credentials`, 422 |
 | PUT | `/api/v1/users/me/username` `{new_username}` | 200 `UserResponse` | 409 `username_taken`, 422 |
-| DELETE | `/api/v1/users/me` | 204, мягкое удаление | 401 |
+| DELETE | `/api/v1/users/me` | 204, мягкое удаление | 401, 409 `user_owns_projects` |
+| GET | `/api/v1/projects` (`listProjects`) | 200 `ProjectResponse[]` по `moving_date` | 401 |
+| POST | `/api/v1/projects` (`createProject`) `{name, moving_date, time_zone, …}` | 201 `ProjectResponse` | 409 `room_name_taken`, 422 `invalid_time_zone` и др. |
+| GET | `/api/v1/projects/{id}` (`getProject`) | 200 `ProjectResponse` | 404 `project_not_found` |
+| PATCH | `/api/v1/projects/{id}` (`updateProject`) | 200 `ProjectResponse` | 404 `project_not_found`, 422 |
+| DELETE | `/api/v1/projects/{id}` (`deleteProject`) | 204, мягкое удаление | 403 `not_project_owner`, 404 `project_not_found` |
+| PUT | `/api/v1/projects/{id}/reminders` (`setProjectReminders`) `{offsets_days}` | 200 `ProjectResponse` | 404 `project_not_found`, 422 `invalid_moving_reminder_offset` |
+| GET | `/api/v1/projects/{id}/collaborators` (`listCollaborators`) | 200 `CollaboratorResponse[]`, владелец первым | 404 `project_not_found` |
+| POST | `/api/v1/projects/{id}/collaborators` (`addCollaborator`) `{username}` | 201 `CollaboratorResponse`, 200 если уже участник | 404 `project_not_found` / `user_not_found` |
+| DELETE | `/api/v1/projects/{id}/collaborators/{user_id}` (`removeCollaborator`) | 204 | 404 `project_not_found`, 409 `cannot_remove_owner` |
 | GET | `/health/live` | 200 `{"status":"ok"}` | — |
 | GET | `/health/ready` | 200 `ok`/`degraded` | 503 `unavailable` |
 
-На всех `/api/v1/*` возможны 429 `rate_limited` и 500 `internal_error`. Эндпоинты `users`
-требуют `Authorization: Bearer <access_token>`. Если api недоступен, nginx отвечает
+На всех `/api/v1/*` возможны 429 `rate_limited` и 500 `internal_error`. Эндпоинты `users` и
+`projects` требуют `Authorization: Bearer <access_token>`. Явный `operationId` (в скобках) пока
+есть только у маршрутов проектов. Если api недоступен, nginx отвечает
 503 `service_unavailable` в том же формате и с `Retry-After`.
 
 ## Формат ошибок
@@ -58,17 +68,20 @@
 | 401 | `invalid_credentials` | неверное имя пользователя или пароль (неотличимы намеренно) |
 | 401 | `invalid_refresh_token` | refresh-токен неизвестен, истёк, отозван или использован повторно |
 | 403 | `not_project_owner` | действие доступно только владельцу проекта (удаление проекта) |
-| 404 | `user_not_found` | нет объекта |
+| 404 | `user_not_found` | нет пользователя, в том числе активного с таким `username` при добавлении участника |
+| 404 | `project_not_found` | проекта нет, он удалён или пользователь не участник (неотличимы намеренно) |
 | 404 / 405 | `not_found`, `method_not_allowed` | нет маршрута или метода |
 | 409 | `username_taken` | имя пользователя занято активным пользователем |
 | 409 | `request_in_progress` | запрос с тем же `Idempotency-Key` ещё выполняется |
 | 409 | `cannot_remove_owner` | попытка убрать владельца из участников проекта |
+| 409 | `user_owns_projects` | удаление аккаунта, который владеет активными проектами: сначала удалите их |
+| 409 | `room_name_taken` | две комнаты одного вида с одним именем в проекте |
 | 409 | `invalid_box_transition` | статус коробки меняется не на один шаг вперёд или назад |
 | 409 | `invalid_item_transition` | переход вещи вне матрицы состояний (`docs/db-design.md`, 5.2) |
 | 409 | `reminder_without_due_date` | напоминание у задачи без срока |
 | 422 | `validation_error` | тело, query или заголовок не соответствуют схеме |
 | 422 | `invalid_username`, `invalid_password`, `invalid_value` | значение нарушает правило домена |
-| 422 | `invalid_project_name`, `invalid_address`, `invalid_room_name`, `invalid_box_number`, `invalid_box_title`, `invalid_qr_token`, `invalid_item_name`, `invalid_quantity`, `invalid_task_title`, `invalid_task_description`, `invalid_due_date`, `invalid_reminder_offset`, `invalid_moving_reminder_offset`, `invalid_push_subscription` | значение нарушает правило домена (длина, диапазон, формат; срок без часового пояса) |
+| 422 | `invalid_project_name`, `invalid_address`, `invalid_time_zone`, `invalid_room_name`, `invalid_box_number`, `invalid_box_title`, `invalid_qr_token`, `invalid_item_name`, `invalid_quantity`, `invalid_task_title`, `invalid_task_description`, `invalid_due_date`, `invalid_reminder_offset`, `invalid_moving_reminder_offset`, `invalid_push_subscription` | значение нарушает правило домена (длина, диапазон, формат; срок без часового пояса; неизвестный IANA-пояс) |
 | 422 | `wrong_room_kind` | коробке нужна комната «куда», вещи — комната «откуда» |
 | 422 | `cross_project_reference` | ссылка на комнату или коробку другого проекта |
 | 422 | `invalid_pagination` | `limit` вне 1..100 или `offset < 0` |
@@ -96,14 +109,14 @@
 
 Списочные эндпоинты отвечают `{"items": [...], "total": 57, "limit": 20, "offset": 0}`
 (`PageResponse`). `limit` — 1..100, по умолчанию 20; иначе 422 `invalid_pagination`. Сейчас
-списочных эндпоинтов нет: механизм (`PageRequest`, `PageResponse`) готов для первого
-бизнес-модуля.
+его не использует ни один эндпоинт: механизм (`PageRequest`, `PageResponse`) ждёт длинных
+списков (коробки, вещи). Короткие списки (проекты, участники) отдаются целиком массивом.
 
 ## Идемпотентность (`Idempotency-Key`)
 
 Механизм для небезопасных эндпоинтов, которые клиент может повторить после обрыва связи.
-Сейчас его не использует ни один бизнес-эндпоинт; новый эндпоинт подключает его через
-`run_idempotent(...)` и параметр `IdempotencyKey`. Заголовок необязателен, длина 8–128
+Сейчас его использует `POST /api/v1/projects` (scope `create_project:<user_id>`); новый
+эндпоинт подключает его через `run_idempotent(...)` и параметр `IdempotencyKey`. Заголовок необязателен, длина 8–128
 символов. Ключ привязывается к операции и пользователю через `scope` (например,
 `create_project:<user_id>`): одинаковые ключи разных пользователей не конфликтуют.
 
@@ -117,6 +130,40 @@
 | Redis недоступен | запрос выполняется без защиты от повторов (fail-open) |
 
 Состояние `pending` живёт 30 секунд: упавший воркер не блокирует ключ на сутки.
+
+## Проекты
+
+Решения и альтернативы — в [ADR 0010](adr/0010-projects-api.md).
+
+- **Доступ.** Все операции доступны только участникам. Не-участник получает 404
+  `project_not_found`, как и для несуществующего или удалённого проекта: существование чужого
+  проекта не раскрывается. 403 `not_project_owner` — только участнику, который удаляет чужой
+  проект. Остальное (правка, напоминания, участники) разрешено любому участнику.
+- **`POST /projects`.** Обязательны `name`, `moving_date`, `time_zone` (IANA, например
+  `Europe/Moscow`). Необязательны `origin_address`, `destination_address`, `qr_code_strategy`
+  (по умолчанию `PROTECTED`), `reminder_offsets_days` и `rooms: {source, destination}` —
+  комнаты создаются в той же транзакции. Поддерживает `Idempotency-Key`.
+- **`PATCH /projects/{id}`.** Неотправленное поле не меняется. `null` очищает адрес; `null`
+  в `name`, `moving_date`, `time_zone`, `qr_code_strategy` — 422 `validation_error`. Смена
+  `moving_date` или `time_zone` переносит ожидающие напоминания о переезде.
+- **`DELETE /projects/{id}`.** Только владелец. Мягкое удаление, для пользователей
+  окончательное; ожидающие уведомления проекта отменяются.
+- **Напоминания о переезде** (`PUT /projects/{id}/reminders {offsets_days}`). Набор заменяется
+  целиком, повтор того же набора ничего не меняет. Смещение — 0..365 дней, 0 — день переезда.
+  Уведомление получает каждый участник в 09:00 по `time_zone` проекта в день
+  `moving_date − offset`; уже прошедшие моменты не ставятся. В ответе
+  `reminder_offsets_days` по возрастанию.
+- **Участники.** `POST …/collaborators {username}`: 201 — добавлен, 200 — уже был участником
+  (ничего не изменилось). `DELETE …/collaborators/{user_id}`: убрать может любой участник,
+  свой `user_id` — выход из проекта; владельца убрать нельзя (409), не-участник — no-op (204).
+  Назначения на задачи уходят вместе с участием, ожидающие уведомления в проекте отменяются.
+  Удалённые аккаунты в списке участников не показываются.
+- **Ответы.** `ProjectResponse`: `id`, `name`, `moving_date`, `origin_address`,
+  `destination_address`, `qr_code_strategy`, `time_zone`, `reminder_offsets_days`,
+  `owner {id, username}`, `is_owner` (текущий пользователь — владелец), `created_at`,
+  `updated_at`. `CollaboratorResponse`: `user {id, username}`, `is_owner`, `created_at`
+  (время вступления).
+- **Удаление аккаунта.** Владелец активных проектов получает 409 `user_owns_projects`.
 
 ## Аутентификация
 

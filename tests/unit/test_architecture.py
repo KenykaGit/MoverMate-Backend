@@ -39,6 +39,7 @@ APPLICATION_FEATURE_DEPS = {
     "users": frozenset[str](),
     "auth": frozenset({"users"}),
     "health": frozenset[str](),
+    "projects": frozenset[str](),
 }
 APPLICATION_SHARED = ("app.application.common", "app.application.interfaces")
 APPLICATION_SHARED_MODULES = ("app.application.exceptions",)

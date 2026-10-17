@@ -9,6 +9,10 @@ class InvalidAddressError(DomainError):
     """The address does not satisfy domain rules."""
 
 
+class InvalidTimeZoneError(DomainError):
+    """The time zone is not a known IANA name."""
+
+
 class CannotRemoveOwnerError(DomainError):
     """The owner always stays a member of their project."""
 

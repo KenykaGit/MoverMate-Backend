@@ -8,7 +8,7 @@ from app.domain.common.errors import InvalidMovingReminderOffsetError, InvalidRe
 
 REMINDER_OFFSET_MIN_HOURS = 1
 REMINDER_OFFSET_MAX_HOURS = 24 * 365
-MOVING_REMINDER_MIN_DAYS = 1
+MOVING_REMINDER_MIN_DAYS = 0
 MOVING_REMINDER_MAX_DAYS = 365
 
 
@@ -38,8 +38,8 @@ class ReminderOffset:
 class MovingReminderOffset:
     """How many whole days before the moving date the members of a project are reminded.
 
-    The moving date has no time of day: the moment of sending is derived from it
-    by the application.
+    Zero means the morning of the moving day itself. The moving date has no time
+    of day: the project decides the moment of sending (Project.moving_reminder_at).
     """
 
     days: int

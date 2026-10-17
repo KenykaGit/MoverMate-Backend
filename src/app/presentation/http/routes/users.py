@@ -52,8 +52,12 @@ async def change_username(
     return UserResponse.from_dto(changed)
 
 
-@router.delete("/me", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete(
+    "/me",
+    status_code=status.HTTP_204_NO_CONTENT,
+    responses=error_doc(status.HTTP_409_CONFLICT, "Owns active projects"),
+)
 async def delete_me(user: CurrentUser, soft_delete_user: FromDishka[SoftDeleteUser]) -> None:
     """Soft-delete the account and end every session; the username
-    becomes free at once."""
+    becomes free at once. Owners delete their projects first."""
     await soft_delete_user(user.id)

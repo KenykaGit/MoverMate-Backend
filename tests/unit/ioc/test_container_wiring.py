@@ -35,6 +35,7 @@ from app.application.interfaces.tokens import (
     AbstractRefreshTokenGenerator,
 )
 from app.application.interfaces.user_repository import AbstractUserRepository
+from app.application.projects.services import MovingReminderScheduler
 from app.application.users.register_user import RegisterUser
 from app.config import AuthSettings, RateLimitSettings, Settings
 from app.domain.common.ids import UserId, new_id
@@ -122,7 +123,14 @@ class TestGraph:
             assert isinstance(await request.get(use_case), use_case)
 
     @pytest.mark.parametrize(
-        "service", [CredentialsVerifier, TokenPairIssuer, IdempotentExecutor, CheckReadiness]
+        "service",
+        [
+            CredentialsVerifier,
+            TokenPairIssuer,
+            IdempotentExecutor,
+            CheckReadiness,
+            MovingReminderScheduler,
+        ],
     )
     async def test_application_services_are_provided(
         self, container: AsyncContainer, service: type

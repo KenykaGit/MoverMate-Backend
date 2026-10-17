@@ -6,6 +6,7 @@ of a scenario: something is missing, taken, or the caller is not allowed in.
 
 from uuid import UUID
 
+from app.domain.inventory.value_objects import RoomKind, RoomName
 from app.domain.users.value_objects import Username
 
 
@@ -18,15 +19,38 @@ class NotFoundError(ApplicationError):
 
 
 class UserNotFoundError(NotFoundError):
-    def __init__(self, user_id: UUID) -> None:
-        super().__init__(f"User {user_id} not found")
-        self.user_id = user_id
+    def __init__(self, user: UUID | Username) -> None:
+        super().__init__(f"User {user} not found")
+        self.user = user
+
+
+class ProjectNotFoundError(NotFoundError):
+    """No such active project, or the caller is not its member: strangers must not
+    learn that a project exists, so both cases look the same."""
+
+    def __init__(self, project_id: UUID) -> None:
+        super().__init__(f"Project {project_id} not found")
+        self.project_id = project_id
 
 
 class UsernameAlreadyTakenError(ApplicationError):
     def __init__(self, username: Username) -> None:
         super().__init__(f"Username {username} is already taken")
         self.username = username
+
+
+class UserOwnsProjectsError(ApplicationError):
+    """An owner cannot leave active projects without an owner: delete them first."""
+
+    def __init__(self) -> None:
+        super().__init__("Delete the projects you own before deleting the account")
+
+
+class RoomNameTakenError(ApplicationError):
+    def __init__(self, kind: RoomKind, name: RoomName) -> None:
+        super().__init__(f"The project already has a {kind.lower()} room named {name}")
+        self.kind = kind
+        self.name = name
 
 
 class InvalidCredentialsError(ApplicationError):

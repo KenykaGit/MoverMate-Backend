@@ -197,13 +197,23 @@ async def test_reminder_offset_range(connection: AsyncConnection, project: str) 
     assert found == "ck_task_reminders_offset_hours_range"
 
 
-async def test_moving_reminder_offset_range(connection: AsyncConnection, project: str) -> None:
-    found = await violation(
-        insert(connection, "project_reminders", {"project_id": project, "offset_days": 0}),
-        connection,
-    )
+@pytest.mark.parametrize(
+    ("offset_days", "constraint"),
+    [
+        (-1, "ck_project_reminders_offset_days_range"),
+        (0, None),  # the morning of the moving day itself (migration 0006)
+        (365, None),
+        (366, "ck_project_reminders_offset_days_range"),
+    ],
+)
+async def test_moving_reminder_offset_range(
+    connection: AsyncConnection, project: str, offset_days: int, constraint: str | None
+) -> None:
+    values = {"project_id": project, "offset_days": offset_days}
 
-    assert found == "ck_project_reminders_offset_days_range"
+    found = await violation(insert(connection, "project_reminders", values), connection)
+
+    assert found == constraint
 
 
 async def test_audit_entity_type_follows_the_action(
