@@ -93,31 +93,24 @@ api, worker ── общий том vapid: ключ VAPID (api отдаёт п�
   `IdempotentExecutor`, `MovingReminderScheduler`) и хелперы (`lookup.py`) только готовят
   изменения и никогда не коммитят. Это проверяет AST-тест.
 - Порты (`application/interfaces/`) — абстрактные классы: репозитории (пользователи, токены,
-  проекты, комнаты, уведомления, push-подписки, журнал), модели чтения `AbstractProjectReader`
-  и `AbstractNotificationContextReader`, хэшер, токены, rate limiter, хранилище
-  идемпотентности, отправка Web Push (`AbstractPushSender`), ключи VAPID (`AbstractPushKeys`),
-  health probe.
-- `application/common` — общие механизмы без бизнес-смысла: часы, UoW, пагинация
-  (`PageRequest`/`Page`), идемпотентность (`IdempotentExecutor`) и `Patch`/`UNSET` для
-  частичных обновлений. Идемпотентность использует `POST /projects`; пагинация ждёт длинных
-  списков и проверена unit-тестами и тестовым маршрутом в интеграционных тестах.
-- Фичи `users`, `auth`, `health`, `projects`, `notifications` независимы. Исключение одно: `auth` может
-  `IdempotentExecutor`) и хелперы (`lookup.py`) только готовят изменения и никогда не
-  коммитят. Это проверяет AST-тест.
-- Порты (`application/interfaces/`) — абстрактные классы: репозитории, хэшер, токены,
-  rate limiter, хранилище идемпотентности, health probe.
-- **Read model** — порт чтения внутри фичи (`inventory/read_model.py`). Экранам нужны
-  представления из нескольких агрегатов сразу (коробка с комнатой, создателем и превью
-  содержимого), и собирать их из агрегатов значило бы делать запрос на каждый объект. Use
-  cases меняют данные через репозитории, а отдают ответ через read model, который возвращает
-  готовые DTO за несколько запросов на страницу
+  проекты, комнаты, коробки, вещи, уведомления, push-подписки, журнал), модели чтения
+  `AbstractProjectReader` и `AbstractNotificationContextReader`, хэшер, токены, rate limiter,
+  хранилище идемпотентности, отправка Web Push (`AbstractPushSender`), ключи VAPID
+  (`AbstractPushKeys`), health probe.
+- **Read model** — порт чтения внутри фичи (`inventory/read_model.py`,
+  `summaries/read_model.py`). Экранам нужны представления из нескольких агрегатов сразу
+  (коробка с комнатой, создателем и превью содержимого), и собирать их из агрегатов значило
+  бы делать запрос на каждый объект. Use cases меняют данные через репозитории, а отдают ответ
+  через read model, который возвращает готовые DTO за несколько запросов на страницу
   ([ADR 0011](adr/0011-inventory-read-model.md)). Порт возвращает DTO фичи, поэтому лежит в
   ней, а не в `interfaces/` (общие части application фичи не импортируют).
 - `application/common` — общие механизмы без бизнес-смысла: часы, UoW, пагинация по offset
   (`PageRequest`/`Page`) и по курсору (`CursorPageRequest`/`CursorPage`), маркер `UNSET`
   для частичных обновлений и идемпотентность (`IdempotentExecutor`).
-- Фичи `users`, `auth`, `health`, `inventory` независимы. Исключение одно: `auth` может
-  использовать `users` (`AuthenticateUser` вызывает `GetUser`).
+- Фичи `users`, `auth`, `health`, `projects`, `notifications`, `inventory`, `summaries`
+  независимы. Исключений два: `auth` использует `users` (`AuthenticateUser` вызывает
+  `GetUser`), а `summaries` использует `inventory` (проверку участия и DTO ссылок на комнаты и
+  коробки).
 - **Проекты** ([ADR 0010](adr/0010-projects-api.md)). Изменяющий use case берёт проект с
   блокировкой строки (`get_by_id(for_update=True)`) через `get_member_project_or_raise`:
   не-участник получает тот же `ProjectNotFoundError`, что и для несуществующего проекта.
@@ -132,6 +125,11 @@ api, worker ── общий том vapid: ключ VAPID (api отдаёт п�
   отвечает 404 того объекта, который он просил, а не 403. Порты проектов, уведомлений и
   журнала (`AbstractProjectRepository`, `AbstractNotificationRepository`, `AbstractAuditLog`)
   пока содержат только то, что нужно инвентарю.
+- **Сводки** ([ADR 0012](adr/0012-summaries-read-model.md)). Use cases `summaries`
+  (`GetProjectSummary`, `GetLoadingChecklist`, `GetUnpackingProgress`, `GetBoxLabels`)
+  проверяют участие через `project_of_member` и читают `AbstractSummaryReadModel`. Агрегаты
+  считает SQL, по одному выражению на ответ, а правило «комната погружена» лежит в домене
+  (`is_source_room_loaded`).
 
 ## Поток запроса
 
@@ -350,9 +348,9 @@ import-linter выразить не может:
   отвечают 403); ротации ключа нет, кроме «новый ключ и повторная подписка клиентов».
 - У воркера нет `/metrics`: очередь видна по проверке `notifications` в `/health/ready`,
   healthcheck контейнера и логам.
-- Через API открыты только проекты, участники и push-подписки. Комнаты создаются лишь вместе с проектом
-  (`POST /projects`); эндпоинтов комнат, коробок, вещей и задач пока нет, хотя домен и
-  таблицы для них готовы.
+- Эндпоинтов задач пока нет, хотя домен и таблицы для них готовы. Сводка
+  (`summary`) уже считает задачи и отдаёт `next_task`, но на стенде задач нет, пока их не
+  создаёт API.
 - Явные `operationId` есть только у маршрутов проектов и push; у `auth` и `users` они сгенерированы
   FastAPI, и SDK фронтенда получит для них длинные имена функций.
 - Миграция [0002](../migrations/versions/0002_drop_user_email.py) удаляет колонку `users.email`

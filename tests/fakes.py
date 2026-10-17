@@ -7,7 +7,7 @@ and the tests catch that.
 
 import asyncio
 import copy
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Collection, Iterable, Sequence
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
@@ -80,6 +80,14 @@ from app.application.inventory.dto import (
 )
 from app.application.inventory.dto import UserRefDTO as InventoryUserRefDTO
 from app.application.inventory.read_model import AbstractInventoryReadModel
+from app.application.summaries.dto import (
+    BoxLabelDTO,
+    DoneCountDTO,
+    LoadingChecklistRoomDTO,
+    ProjectSummaryDTO,
+    UnpackingProgressRoomDTO,
+)
+from app.application.summaries.read_model import AbstractSummaryReadModel
 from app.domain.audit.entity import AuditAction, AuditEntry
 from app.domain.common.ids import BoxId, ItemId, ProjectId, RoomId, UserId
 from app.domain.common.reminders import MovingReminderOffset
@@ -98,6 +106,7 @@ from app.domain.notifications.push_subscription import (
     PushSubscriptionId,
 )
 from app.domain.projects.entity import Project
+from app.domain.tasks.value_objects import TaskPhase
 from app.domain.tokens.entity import RefreshToken, RefreshTokenId, TokenFamilyId
 from app.domain.users.entity import User
 from app.domain.users.value_objects import PasswordHash, RawPassword, Username
@@ -819,3 +828,45 @@ class FakeInventoryReadModel(AbstractInventoryReadModel):
     def _room_ref(self, room_id: RoomId) -> RoomRefDTO:
         room = self._rooms.rooms[room_id]
         return RoomRefDTO(id=room.id, name=room.name.value)
+
+
+def empty_summary() -> ProjectSummaryDTO:
+    return ProjectSummaryDTO(
+        boxes_by_status=dict.fromkeys(BoxStatus, 0),
+        items_by_state=dict.fromkeys(ItemState, 0),
+        tasks_by_phase=dict.fromkeys(TaskPhase, DoneCountDTO(total=0, done=0)),
+        first_necessity=DoneCountDTO(total=0, done=0),
+        next_task=None,
+    )
+
+
+class FakeSummaryReadModel(AbstractSummaryReadModel):
+    """Answers with what a test put in and records every query. The aggregation
+    itself is SQL: tests/integration/repositories/test_summary_reader.py."""
+
+    def __init__(self) -> None:
+        self.summary = empty_summary()
+        self.checklist: list[LoadingChecklistRoomDTO] = []
+        self.progress: list[UnpackingProgressRoomDTO] = []
+        self.labels: list[BoxLabelDTO] = []
+        self.queries: list[tuple[str, ProjectId]] = []
+        self.label_box_ids: list[frozenset[BoxId] | None] = []
+
+    async def project_summary(self, project_id: ProjectId) -> ProjectSummaryDTO:
+        self.queries.append(("project_summary", project_id))
+        return self.summary
+
+    async def loading_checklist(self, project_id: ProjectId) -> list[LoadingChecklistRoomDTO]:
+        self.queries.append(("loading_checklist", project_id))
+        return list(self.checklist)
+
+    async def unpacking_progress(self, project_id: ProjectId) -> list[UnpackingProgressRoomDTO]:
+        self.queries.append(("unpacking_progress", project_id))
+        return list(self.progress)
+
+    async def box_labels(
+        self, project_id: ProjectId, box_ids: Collection[BoxId] | None = None
+    ) -> list[BoxLabelDTO]:
+        self.queries.append(("box_labels", project_id))
+        self.label_box_ids.append(None if box_ids is None else frozenset(box_ids))
+        return list(self.labels)

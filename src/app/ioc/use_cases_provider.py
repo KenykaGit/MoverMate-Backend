@@ -42,6 +42,10 @@ from app.application.projects.remove_collaborator import RemoveCollaborator
 from app.application.projects.services import MovingReminderScheduler
 from app.application.projects.set_project_reminders import SetProjectReminders
 from app.application.projects.update_project import UpdateProject
+from app.application.summaries.get_box_labels import GetBoxLabels
+from app.application.summaries.get_loading_checklist import GetLoadingChecklist
+from app.application.summaries.get_project_summary import GetProjectSummary
+from app.application.summaries.get_unpacking_progress import GetUnpackingProgress
 from app.application.users.change_password import ChangePassword
 from app.application.users.change_username import ChangeUsername
 from app.application.users.get_user import GetUser
@@ -79,6 +83,9 @@ class UseCaseProvider(Provider):
         ListCollaborators,
         AddCollaborator,
         RemoveCollaborator,
+    )
+    summaries = provide_all(
+        GetProjectSummary, GetLoadingChecklist, GetUnpackingProgress, GetBoxLabels
     )
     notifications = provide_all(
         DeliverNextNotification, GetVapidPublicKey, SubscribeToPush, UnsubscribeFromPush

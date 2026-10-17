@@ -18,6 +18,7 @@ from app.domain.inventory.errors import (
     WrongRoomKindError,
 )
 from app.domain.inventory.item import ITEM_TRANSITIONS, Item, ItemState
+from app.domain.inventory.progress import is_source_room_loaded
 from app.domain.inventory.value_objects import (
     BOX_TITLE_MAX_LENGTH,
     ITEM_NAME_MAX_LENGTH,
@@ -283,3 +284,33 @@ def _item_in(state: ItemState) -> Item:
         item.mark_lost()
     assert item.state is state
     return item
+
+
+class TestLoadingProgress:
+    @pytest.mark.parametrize(
+        ("status", "loaded"),
+        [
+            (S.PACKING, False),
+            (S.PACKED, False),
+            (S.LOADED, True),
+            (S.DELIVERED, True),
+            (S.UNPACKED, True),
+        ],
+    )
+    def test_box_has_been_loaded_from_loaded_on(self, status: BoxStatus, loaded: bool) -> None:
+        assert status.has_been_loaded is loaded
+
+    @pytest.mark.parametrize(
+        ("items_to_pack", "statuses", "loaded"),
+        [
+            (0, [], True),  # nothing of the room is left behind
+            (1, [], False),
+            (0, [S.LOADED, S.DELIVERED, S.UNPACKED], True),
+            (0, [S.LOADED, S.PACKED], False),
+            (3, [S.LOADED], False),
+        ],
+    )
+    def test_source_room_is_loaded_when_nothing_is_left_behind(
+        self, items_to_pack: int, statuses: list[BoxStatus], loaded: bool
+    ) -> None:
+        assert is_source_room_loaded(items_to_pack=items_to_pack, box_statuses=statuses) is loaded

@@ -42,6 +42,8 @@ APPLICATION_FEATURE_DEPS = {
     "projects": frozenset[str](),
     "notifications": frozenset[str](),
     "inventory": frozenset[str](),
+    # Overview screens over the inventory: its access checks and reference views.
+    "summaries": frozenset({"inventory"}),
 }
 APPLICATION_SHARED = ("app.application.common", "app.application.interfaces")
 APPLICATION_SHARED_MODULES = ("app.application.exceptions",)

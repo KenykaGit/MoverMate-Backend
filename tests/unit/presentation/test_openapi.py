@@ -9,9 +9,13 @@ import pytest
 from dishka.integrations.fastapi import FastapiProvider
 
 from app.config import Settings
+from app.domain.inventory.box import BoxStatus
+from app.domain.inventory.item import ItemState
+from app.domain.tasks.value_objects import TaskPhase
 from app.ioc.config_provider import http_settings_from
 from app.ioc.container import create_container
 from app.presentation.http.app import create_app
+from app.presentation.http.routes.summaries import MAX_LABELS_PER_REQUEST
 from tests.routes import ECHO_PATH, ITEM_PATH, add_test_routes
 
 type Schema = dict[str, Any]
@@ -35,8 +39,15 @@ PROJECT_OPERATION_IDS = {
     "POST /api/v1/projects/{project_id}/collaborators": "addCollaborator",
     "DELETE /api/v1/projects/{project_id}/collaborators/{user_id}": "removeCollaborator",
 }
+SUMMARY_OPERATION_IDS = {
+    "GET /api/v1/projects/{project_id}/summary": "getProjectSummary",
+    "GET /api/v1/projects/{project_id}/loading-checklist": "getLoadingChecklist",
+    "GET /api/v1/projects/{project_id}/unpacking-progress": "getUnpackingProgress",
+    "GET /api/v1/projects/{project_id}/labels": "getBoxLabels",
+}
 PROTECTED = {
     *PROJECT_OPERATION_IDS,
+    *SUMMARY_OPERATION_IDS,
     "PUT /api/v1/push/subscriptions",
     "DELETE /api/v1/push/subscriptions",
     "GET /api/v1/users/me",
@@ -191,6 +202,7 @@ DECLARED_PARAMETERS = {
         ("query", "limit"),
         ("query", "offset"),
     },
+    "GET /api/v1/projects/{project_id}/labels": {("query", "box_ids")},
 }
 
 
@@ -213,7 +225,9 @@ def test_injected_dependencies_do_not_leak_into_parameters(schema: Schema) -> No
 
 
 def test_operations_have_stable_ids(schema: Schema) -> None:
-    expected = PROJECT_OPERATION_IDS | PUSH_OPERATION_IDS | INVENTORY_OPERATION_IDS
+    expected = (
+        PROJECT_OPERATION_IDS | PUSH_OPERATION_IDS | INVENTORY_OPERATION_IDS | SUMMARY_OPERATION_IDS
+    )
     found = {name: operations(schema)[name].get("operationId") for name in expected}
     every_id = [op["operationId"] for op in operations(schema).values()]
 
@@ -272,6 +286,7 @@ def test_versioned_operations_document_the_error_contract(schema: Schema, name: 
         ("PUT /api/v1/boxes/{box_id}/contents-reminder", "409"),
         ("PUT /api/v1/items/{item_id}/state", "409"),
         ("GET /api/v1/items/{item_id}", "404"),
+        *((name, "404") for name in SUMMARY_OPERATION_IDS),
     ],
 )
 def test_specific_error_statuses_are_documented(schema: Schema, name: str, status: str) -> None:
@@ -320,3 +335,33 @@ def test_patch_fields_that_cannot_be_cleared_are_not_nullable(schema: Schema) ->
 
     assert nullable == {"origin_address", "destination_address"}
     assert "required" not in schema["components"]["schemas"]["UpdateProjectRequest"]
+
+
+@pytest.mark.parametrize(
+    ("model", "enum"),
+    [
+        ("BoxStatusCounts", BoxStatus),
+        ("ItemStateCounts", ItemState),
+        ("TaskPhaseCounts", TaskPhase),
+    ],
+)
+def test_counters_have_a_required_field_per_enum_value(
+    schema: Schema, model: str, enum: type[BoxStatus | ItemState | TaskPhase]
+) -> None:
+    """Exact objects instead of maps: a new status must show up in the contract."""
+    counts = schema["components"]["schemas"][model]
+
+    assert list(counts["properties"]) == [member.value for member in enum]
+    assert counts["required"] == list(counts["properties"])
+
+
+def test_labels_limit_the_number_of_chosen_boxes(schema: Schema) -> None:
+    [box_ids] = [
+        p
+        for p in operations(schema)["GET /api/v1/projects/{project_id}/labels"]["parameters"]
+        if p["name"] == "box_ids"
+    ]
+    array = next(option for option in box_ids["schema"]["anyOf"] if option["type"] == "array")
+
+    assert array["maxItems"] == MAX_LABELS_PER_REQUEST
+    assert box_ids["required"] is False

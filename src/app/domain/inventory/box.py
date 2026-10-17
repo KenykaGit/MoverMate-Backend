@@ -24,6 +24,11 @@ class BoxStatus(StrEnum):
     def position(self) -> int:
         return list(BoxStatus).index(self)
 
+    @property
+    def has_been_loaded(self) -> bool:
+        """LOADED or any later status: the box has left the old home."""
+        return self.position >= BoxStatus.LOADED.position
+
 
 _STEPS_FORWARD = frozenset(pairwise(BoxStatus))
 BOX_TRANSITIONS: frozenset[tuple[BoxStatus, BoxStatus]] = _STEPS_FORWARD | {

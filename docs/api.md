@@ -80,6 +80,42 @@
 от 1 до 100 (по умолчанию 50). Поиск сортирует по рангу и поэтому пагинируется через
 `limit`/`offset`: `{"results": [...], "has_more": true}`. Если api недоступен, nginx отвечает
 
+### Сводки для экранов
+
+Только чтение: обзор, прогресс и этикетки по всему проекту (раздел 10
+[api-endpoints.md](../api-endpoints.md)). Списки коробок и вещей постраничные, поэтому
+счётчики считает сервер. Доступ — любому участнику, иначе 404 `project_not_found`. Решения —
+в [ADR 0012](adr/0012-summaries-read-model.md).
+
+| Метод | Путь (`/api/v1`) | operationId | Успех | Ошибки |
+|---|---|---|---|---|
+| GET | `/projects/{project_id}/summary` | `getProjectSummary` | 200 `ProjectSummary` | 404 `project_not_found` |
+| GET | `/projects/{project_id}/loading-checklist` | `getLoadingChecklist` | 200 `LoadingChecklistRoom[]` | 404 `project_not_found` |
+| GET | `/projects/{project_id}/unpacking-progress` | `getUnpackingProgress` | 200 `UnpackingProgressRoom[]` | 404 `project_not_found` |
+| GET | `/projects/{project_id}/labels?box_ids=` | `getBoxLabels` | 200 `BoxLabel[]` | 404 `project_not_found`, 422 `validation_error` (больше 100 `box_ids`) |
+
+- **`summary`**:
+  - `boxes {total, by_status}`, `items {total, by_state}`,
+    `tasks {total, done, by_phase: {BEFORE|DURING|AFTER: {total, done}}}`. В `by_*` есть поле
+    для каждого значения enum, нули включены. Считаются только активные (не удалённые)
+    объекты, и все счётчики берутся из одного снимка БД.
+  - `first_necessity {total, taken_out}` — чек-лист первого дня: вещи `FIRST_NECESSITY` и
+    сколько из них уже `TAKEN_OUT`.
+  - `next_task` — первая невыполненная задача (`Task`) по `phase` (`BEFORE` → `DURING` →
+    `AFTER`), затем `due_at` (без срока — последними), затем по времени создания; `null`, если
+    всё сделано. В `assignees` нет удалённых аккаунтов.
+- **`loading-checklist`** — все активные комнаты «откуда» по имени, включая пустые: `room`,
+  `to_pack_count` (вещи `TO_PACK` этой комнаты), `boxes` (`BoxRef` коробок с её вещами
+  `IN_BOX`, по номеру), `is_loaded`. Комната погружена, если в ней нечего паковать и все её
+  коробки в `LOADED` или дальше. Комната без вещей тоже считается погруженной. Вещи
+  `TAKEN_OUT` и `LOST` не учитываются.
+- **`unpacking-progress`** — все активные комнаты «куда» по имени, включая пустые: `room`,
+  `total` (активные коробки в эту комнату), `unpacked` (из них `UNPACKED`).
+- **`labels`** — `BoxLabel[]` по `number`: `id`, `number`, `title`, `is_fragile`,
+  `destination_room`, `qr_token`, `item_names` (по приоритету, затем по имени). Без `box_ids`
+  возвращаются все активные коробки, `box_ids` повторяется для выбранных
+  (`?box_ids=…&box_ids=…`). Чужие, удалённые и неизвестные id пропускаются, ошибки нет.
+
 ## Формат ошибок
 
 Любой ответ с кодом не 2xx имеет одну форму, включая ошибки валидации, 500 и ответы самого nginx:

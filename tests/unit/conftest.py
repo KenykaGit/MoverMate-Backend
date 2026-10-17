@@ -8,6 +8,7 @@ from tests.fakes import (
     FakeAccessTokenService,
     FakePasswordHasher,
     FakeRefreshTokenGenerator,
+    FakeSummaryReadModel,
     FakeUnitOfWork,
     InMemoryAuditLogRepository,
     InMemoryNotificationRepository,
@@ -41,6 +42,11 @@ def project_reader(
     projects: InMemoryProjectRepository, users: InMemoryUserRepository
 ) -> InMemoryProjectReader:
     return InMemoryProjectReader(projects, users)
+
+
+@pytest.fixture
+def summary_read_model() -> FakeSummaryReadModel:
+    return FakeSummaryReadModel()
 
 
 @pytest.fixture

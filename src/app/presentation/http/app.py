@@ -24,6 +24,7 @@ from app.presentation.http.routes import (
     projects,
     push,
     rooms,
+    summaries,
     users,
 )
 from app.presentation.http.settings import HttpSettings
@@ -72,6 +73,7 @@ def create_app(container: AsyncContainer, settings: HttpSettings) -> FastAPI:
         auth.router,
         users.router,
         projects.router,
+        summaries.router,
         rooms.router,
         boxes.router,
         items.router,

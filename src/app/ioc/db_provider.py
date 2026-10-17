@@ -19,9 +19,11 @@ from app.application.interfaces.refresh_token_repository import AbstractRefreshT
 from app.application.interfaces.room_repository import AbstractRoomRepository
 from app.application.interfaces.user_repository import AbstractUserRepository
 from app.application.inventory.read_model import AbstractInventoryReadModel
+from app.application.summaries.read_model import AbstractSummaryReadModel
 from app.config import DatabaseSettings, WorkerSettings
 from app.infrastructure.db.health import DatabaseHealthProbe, NotificationLagProbe
 from app.infrastructure.db.queries.inventory import SqlAlchemyInventoryReadModel
+from app.infrastructure.db.queries.summaries import SqlAlchemySummaryReadModel
 from app.infrastructure.db.repositories.audit_log import SqlAlchemyAuditLogRepository
 from app.infrastructure.db.repositories.box import SqlAlchemyBoxRepository
 from app.infrastructure.db.repositories.item import SqlAlchemyItemRepository
@@ -97,6 +99,9 @@ class DatabaseProvider(Provider):
     )
     inventory_read_model = provide(
         SqlAlchemyInventoryReadModel, scope=Scope.REQUEST, provides=AbstractInventoryReadModel
+    )
+    summary_read_model = provide(
+        SqlAlchemySummaryReadModel, scope=Scope.REQUEST, provides=AbstractSummaryReadModel
     )
     notification_repository = provide(
         SqlAlchemyNotificationRepository,
