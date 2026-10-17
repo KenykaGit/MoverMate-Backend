@@ -22,18 +22,23 @@ from app.application.exceptions import (
     IdempotencyKeyReusedError,
     InvalidCredentialsError,
     InvalidPaginationError,
+    InvalidPhotoError,
     InvalidRefreshTokenError,
     ItemBoxMismatchError,
     ItemNotFoundError,
+    ItemRecognitionDisabledError,
+    ItemRecognitionUnavailableError,
     NotAuthenticatedError,
     NotBoxCreatorError,
     NotFoundError,
+    PhotoTooLargeError,
     ProjectNotFoundError,
     ReminderInThePastError,
     RequestInProgressError,
     RoomInUseError,
     RoomNameTakenError,
     RoomNotFoundError,
+    UnsupportedPhotoTypeError,
     UsernameAlreadyTakenError,
     UserNotFoundError,
     UserOwnsProjectsError,
@@ -90,7 +95,12 @@ class ErrorSpec:
     status_code: int
     code: str
     """Stable machine-readable id: clients branch on it, never on messages."""
+    retry_after_seconds: int | None = None
+    """Sent as Retry-After: the outage is temporary and a retry may succeed."""
 
+
+# Long enough for a rate limit of the LLM proxy (per minute) to reset.
+ITEM_RECOGNITION_RETRY_AFTER_SECONDS = 30
 
 # The most specific class in an error's MRO wins. An ApplicationError that is
 # not covered here is a bug and becomes a 500, not a guessed status code.
@@ -159,6 +169,19 @@ ERROR_SPECS: dict[type[Exception], ErrorSpec] = {
     IdempotencyKeyReusedError: ErrorSpec(
         status.HTTP_422_UNPROCESSABLE_CONTENT, "idempotency_key_reused"
     ),
+    InvalidPhotoError: ErrorSpec(status.HTTP_422_UNPROCESSABLE_CONTENT, "invalid_photo"),
+    PhotoTooLargeError: ErrorSpec(status.HTTP_413_CONTENT_TOO_LARGE, "photo_too_large"),
+    UnsupportedPhotoTypeError: ErrorSpec(
+        status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, "unsupported_photo_type"
+    ),
+    ItemRecognitionUnavailableError: ErrorSpec(
+        status.HTTP_503_SERVICE_UNAVAILABLE,
+        "item_recognition_unavailable",
+        retry_after_seconds=ITEM_RECOGNITION_RETRY_AFTER_SECONDS,
+    ),
+    ItemRecognitionDisabledError: ErrorSpec(
+        status.HTTP_503_SERVICE_UNAVAILABLE, "item_recognition_disabled"
+    ),
 }
 
 # DomainErrors that are never the client's fault: a malformed hash comes from our
@@ -220,13 +243,17 @@ async def _handle_known_error(request: Request, error: Exception) -> JSONRespons
     spec = _spec_for(error)
     if spec is None or isinstance(error, _INTERNAL_ERRORS):
         raise error  # becomes a 500 in _handle_unexpected_error
-    headers = _UNAUTHORIZED_HEADERS if spec.status_code == status.HTTP_401_UNAUTHORIZED else None
+    headers = (
+        dict(_UNAUTHORIZED_HEADERS) if spec.status_code == status.HTTP_401_UNAUTHORIZED else {}
+    )
+    if spec.retry_after_seconds is not None:
+        headers["Retry-After"] = str(spec.retry_after_seconds)
     return error_response(
         request,
         spec.status_code,
         spec.code,
         str(error),
-        headers=headers,
+        headers=headers or None,
     )
 
 

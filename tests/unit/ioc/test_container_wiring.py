@@ -29,6 +29,7 @@ from app.application.common.uow import AbstractUnitOfWork
 from app.application.health.check_readiness import CheckReadiness
 from app.application.health.dto import ReadinessProbes
 from app.application.interfaces.idempotency import AbstractIdempotencyStore
+from app.application.interfaces.item_recognizer import AbstractItemRecognizer
 from app.application.interfaces.password_hasher import AbstractPasswordHasher
 from app.application.interfaces.push_sender import AbstractPushSender
 from app.application.interfaces.rate_limiter import AbstractRateLimiter
@@ -40,16 +41,18 @@ from app.application.interfaces.tokens import (
 from app.application.interfaces.user_repository import AbstractUserRepository
 from app.application.projects.services import MovingReminderScheduler
 from app.application.users.register_user import RegisterUser
-from app.config import AuthSettings, PushSettings, RateLimitSettings, Settings
+from app.config import AuthSettings, LlmSettings, PushSettings, RateLimitSettings, Settings
 from app.domain.common.ids import UserId, new_id
 from app.domain.users.value_objects import RawPassword
 from app.infrastructure.db.repositories.refresh_token import SqlAlchemyRefreshTokenRepository
 from app.infrastructure.db.repositories.user import SqlAlchemyUserRepository
 from app.infrastructure.db.uow import SqlAlchemyUnitOfWork
+from app.infrastructure.llm.recognizer import DisabledItemRecognizer, LlmItemRecognizer
 from app.infrastructure.push.sender import WebPushSender
 from app.ioc.config_provider import ConfigProvider
 from app.ioc.container import create_container
 from app.ioc.db_provider import DatabaseProvider
+from app.ioc.llm_provider import LlmProvider
 from app.ioc.observability_provider import ObservabilityProvider
 from app.ioc.redis_provider import RedisProvider
 from app.ioc.use_cases_provider import UseCaseProvider
@@ -74,7 +77,7 @@ def settings() -> Settings:
             argon2_memory_cost_kib=8,
             argon2_parallelism=1,
         ),
-        rate_limit=RateLimitSettings(api_per_minute=42, auth_per_minute=7),
+        rate_limit=RateLimitSettings(api_per_minute=42, auth_per_minute=7, scan_per_minute=3),
         push=PushSettings(vapid_key_file=Path("/nonexistent/wiring-test/vapid.pem")),
     )
 
@@ -109,6 +112,7 @@ class TestGraph:
             ConfigProvider(),
             DatabaseProvider(),
             RedisProvider(),
+            LlmProvider(),
             UseCaseProvider(),
             ObservabilityProvider(),
         )
@@ -177,6 +181,7 @@ class TestScopes:
             AbstractRefreshTokenGenerator,
             AbstractRateLimiter,
             AbstractIdempotencyStore,
+            AbstractItemRecognizer,
             CheckReadiness,
         ]
         async with container() as first:
@@ -220,7 +225,7 @@ class TestSettingsReachTheAdapters:
             ttl=timedelta(days=7)
         )
         assert await container.get(RateLimitPolicy) == RateLimitPolicy(
-            api_per_window=42, auth_per_window=7
+            api_per_window=42, auth_per_window=7, scan_per_window=3
         )
         assert await container.get(HttpSettings) == HttpSettings(
             title="wiring-test", version="1.2.3", cors_origins=("https://app.example.com",)
@@ -247,3 +252,40 @@ class TestSettingsReachTheAdapters:
         assert sender._vapid is None
         assert sender._session is None
         assert not settings.push.vapid_key_file.exists()
+
+
+class TestPhotoScanning:
+    async def test_without_an_api_key_scanning_is_off_and_not_checked(
+        self, container: AsyncContainer
+    ) -> None:
+        """Switched off is a configuration, not an outage: readiness stays ok."""
+        assert isinstance(await container.get(AbstractItemRecognizer), DisabledItemRecognizer)
+        assert "llm" not in (await container.get(ReadinessProbes)).auxiliary
+
+    async def test_with_an_api_key_the_llm_is_an_auxiliary_dependency(
+        self, settings: Settings
+    ) -> None:
+        llm = LlmSettings(
+            base_url="https://llm.example.com/v1/",
+            api_key=SecretStr("llm-key"),
+            scan_model="openrouter/some-vision-model",
+        )
+        container = create_container(settings.model_copy(update={"llm": llm}))
+        try:
+            recognizer = await container.get(AbstractItemRecognizer)
+            probes = await container.get(ReadinessProbes)
+        finally:
+            await container.close()
+
+        assert isinstance(recognizer, LlmItemRecognizer)
+        assert recognizer._url == "https://llm.example.com/v1/chat/completions"
+        assert recognizer._headers == {"Authorization": "Bearer llm-key"}
+        assert recognizer._model == "openrouter/some-vision-model"
+        assert recognizer._session is None  # no connection until the first scan
+        assert set(probes.critical) == {"postgres"}
+        assert "llm" in probes.auxiliary
+
+    @pytest.mark.parametrize("key", ["", None])
+    def test_an_empty_api_key_means_off(self, key: str | None) -> None:
+        """Compose passes an unset LLM__API_KEY as an empty string."""
+        assert LlmSettings.model_validate({"api_key": key}).api_key is None

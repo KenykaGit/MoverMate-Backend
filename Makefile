@@ -51,6 +51,17 @@ revision: ## Autogenerate a migration from model changes: make revision m="add f
 	uv run alembic revision --autogenerate -m "$(m)" \
 		--rev-id $$(printf "%04d" $$(( $$(ls migrations/versions/[0-9]*.py | wc -l) + 1 )))
 
+.PHONY: llm-check
+llm-check: ## Send a text request to the LLM proxy with LLM__API_KEY (environment or .env)
+	@set -a; [ -f .env ] && . ./.env; set +a; \
+	test -n "$$LLM__API_KEY" || { echo "LLM__API_KEY is not set (environment or .env)"; exit 1; }; \
+	curl -sS --fail-with-body -m 30 \
+		"$${LLM__BASE_URL:-https://llm-proxy.spirit.t-education.com/v1}/chat/completions" \
+		-H "Authorization: Bearer $$LLM__API_KEY" -H "Content-Type: application/json" \
+		-d "{\"model\": \"$${LLM__SCAN_MODEL:-openrouter/claude-haiku-5-5}\", \"max_tokens\": 20, \
+			\"messages\": [{\"role\": \"user\", \"content\": \"Ответь одним словом: ты работаешь?\"}]}"; \
+	status=$$?; echo; exit $$status
+
 .PHONY: lint
 lint: ## Ruff (lint + format check), mypy strict, import-linter contracts
 	uv run ruff check .

@@ -23,6 +23,7 @@ from app.application.inventory.list_boxes import ListBoxes
 from app.application.inventory.list_items import ListItems
 from app.application.inventory.list_rooms import ListRooms
 from app.application.inventory.rename_room import RenameRoom
+from app.application.inventory.scan_items import ScanItems
 from app.application.inventory.schedule_contents_reminder import ScheduleContentsReminder
 from app.application.inventory.search_items import SearchItems
 from app.application.inventory.suggest_boxes import SuggestBoxes
@@ -113,4 +114,5 @@ class UseCaseProvider(Provider):
         DeleteItem,
         SearchItems,
         SuggestBoxes,
+        ScanItems,
     )

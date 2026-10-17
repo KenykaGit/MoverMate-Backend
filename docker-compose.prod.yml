@@ -3,7 +3,8 @@
 # never committed):
 #   POSTGRES_USER, POSTGRES_PASSWORD, POSTGRES_DB, AUTH__SECRET_KEY (>= 32 random chars),
 #   CORS_ORIGINS, DOMAIN (public name for the TLS certificate), optionally CERTBOT_EMAIL,
-#   RATE_LIMIT__API_PER_MINUTE, RATE_LIMIT__AUTH_PER_MINUTE, PUSH__VAPID_SUBJECT.
+#   RATE_LIMIT__API_PER_MINUTE, RATE_LIMIT__AUTH_PER_MINUTE, RATE_LIMIT__SCAN_PER_MINUTE,
+#   PUSH__VAPID_SUBJECT, LLM__API_KEY (photo scanning), LLM__SCAN_MODEL.
 # Provided by the deploy job: IMAGE (registry path), IMAGE_TAG (git short sha).
 # The deploy job also copies docker/nginx/ and docker/certbot/ next to this file.
 x-app: &app
@@ -18,6 +19,10 @@ x-app: &app
     AUTH__SECRET_KEY: ${AUTH__SECRET_KEY:?AUTH__SECRET_KEY is required}
     RATE_LIMIT__API_PER_MINUTE: ${RATE_LIMIT__API_PER_MINUTE:-120}
     RATE_LIMIT__AUTH_PER_MINUTE: ${RATE_LIMIT__AUTH_PER_MINUTE:-10}
+    RATE_LIMIT__SCAN_PER_MINUTE: ${RATE_LIMIT__SCAN_PER_MINUTE:-10}
+    # Photo scanning through the LLM proxy; without a key it answers 503, the rest works.
+    LLM__API_KEY: ${LLM__API_KEY:-}
+    LLM__SCAN_MODEL: ${LLM__SCAN_MODEL:-openrouter/claude-haiku-5-5}
     # Safe only because api publishes no ports: nginx is the single way in.
     FORWARDED_ALLOW_IPS: "*"
 

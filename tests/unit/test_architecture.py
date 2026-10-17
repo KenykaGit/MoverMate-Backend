@@ -64,7 +64,7 @@ TECHNOLOGY_HOMES: dict[str, tuple[str, ...]] = {
     "dishka": ("ioc/", "presentation/", "main.py", "worker/"),
     "taskiq": ("worker/", "infrastructure/tasks/"),
     "taskiq_redis": ("infrastructure/tasks/",),
-    "aiohttp": ("infrastructure/push/",),
+    "aiohttp": ("infrastructure/push/", "infrastructure/llm/"),
     "pywebpush": ("infrastructure/push/",),
     "py_vapid": ("infrastructure/push/",),
     "cryptography": ("infrastructure/push/",),

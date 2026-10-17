@@ -69,6 +69,7 @@
 | GET | `/projects/{project_id}/items?state=&priority=&box_id=&source_room_id=&limit=&after=` | `listItems` | 200 `ItemPage` | 404 `project_not_found` |
 | POST | `/projects/{project_id}/items` | `createItem` | 201 `Item` | 404 `project_not_found`/`room_not_found`/`box_not_found`, 422 `wrong_room_kind` |
 | POST | `/projects/{project_id}/items/batch` (до 100 записей) | `createItems` | 201 `Item[]` | 404 `project_not_found`/`room_not_found`/`box_not_found`, 422 |
+| POST | `/projects/{project_id}/items/scan` (тело — само фото) | `scanItems` | 200 `ItemScan` | 404 `project_not_found`, 413 `photo_too_large`, 415 `unsupported_photo_type`, 422 `invalid_photo`, 429, 503 `item_recognition_unavailable`/`item_recognition_disabled` |
 | GET | `/projects/{project_id}/items/search?q=&limit=&offset=` | `searchItems` | 200 `ItemSearchResult` | 404 `project_not_found` |
 | GET | `/items/{item_id}` | `getItem` | 200 `Item` | 404 `item_not_found` |
 | PATCH | `/items/{item_id}` `{name, quantity, priority, source_room_id}` | `updateItem` | 200 `Item` | 404 `item_not_found`/`room_not_found`, 422 `wrong_room_kind` |
@@ -79,6 +80,30 @@
 Длинные списки отдаются по курсору: `{"results": [...], "next_cursor": "..." | null}`, `limit`
 от 1 до 100 (по умолчанию 50). Поиск сортирует по рангу и поэтому пагинируется через
 `limit`/`offset`: `{"results": [...], "has_more": true}`. Если api недоступен, nginx отвечает
+
+### Сканирование вещей по фото
+
+`POST /api/v1/projects/{project_id}/items/scan` (`scanItems`): пользователь фотографирует
+вещи, модель (`openrouter/claude-haiku-5-5` через LLM-прокси Spirit) возвращает их названия
+и количество. Решения — в [ADR 0013](adr/0013-photo-scanning-with-llm.md).
+
+- **Запрос:** тело — само изображение, `Content-Type` — его тип: `image/jpeg`, `image/png`,
+  `image/webp` или `image/gif`. Multipart и base64 не нужны: в браузере
+  `fetch(url, {method: "POST", body: file, headers: {"Content-Type": file.type, ...}})`.
+  Размер — до 5 МиБ. Перед отправкой уменьшите фото до ~1600 px по длинной стороне: модель
+  всё равно сжимает больше, а запрос станет быстрее. HEIC (iPhone) не поддерживается,
+  конвертируйте в JPEG через `canvas`.
+- **Ответ:** `{"items": [{"name": "Кружка", "quantity": 4}]}`, до 50 позиций, в порядке
+  модели, может быть пустым. Ничего не сохраняется. Покажите список пользователю, дайте
+  исправить и отправьте в `createItems` (`entries` той же формы) с выбранной комнатой.
+  Названия на русском и уже проходят правила `ItemName`. Одинаковые названия без учёта
+  регистра объединяются, количество приводится к 1..10000.
+- **Ошибки:** проверка фото идёт до обращения к модели, поэтому 413/415/422 ничего не стоят.
+  503 `item_recognition_unavailable` (с `Retry-After: 30`): модель не ответила за 30 с,
+  прокси вернул ошибку или квота исчерпана. Повтор допустим. 503 `item_recognition_disabled`
+  (без `Retry-After`): на сервере не задан `LLM__API_KEY`, повтор не поможет, скройте кнопку.
+- **Лимит:** отдельный `RATE_LIMIT__SCAN_PER_MINUTE` (по умолчанию 10 в минуту с IP) сверх
+  общего: каждый скан — платный вызов модели.
 
 ### Сводки для экранов
 
@@ -169,8 +194,13 @@
 | 422 | `reminder_in_the_past` | время напоминания уже прошло |
 | 422 | `invalid_pagination` | `limit` вне 1..100 или `offset < 0` |
 | 422 | `idempotency_key_reused` | ключ уже использован с другим телом запроса |
+| 413 | `photo_too_large` | фото для сканирования больше 5 МиБ (отвечает api или nginx) |
+| 415 | `unsupported_photo_type` | `Content-Type` фото не JPEG, PNG, WebP или GIF |
+| 422 | `invalid_photo` | пустое тело вместо фото |
 | 429 | `rate_limited` | превышен лимит, см. `Retry-After` |
 | 500 | `internal_error` | непредвиденная ошибка; ищите `request_id` в логах |
+| 503 | `item_recognition_unavailable` | модель для сканирования не ответила или ответила не по формату; повторите после `Retry-After` |
+| 503 | `item_recognition_disabled` | сканирование не настроено на сервере (`LLM__API_KEY`); повтор не поможет |
 | 503 | `service_unavailable` | отвечает nginx: api недоступен |
 
 ## Валидация
@@ -297,6 +327,7 @@
 |---|---|---|
 | `api` | 120/мин (`RATE_LIMIT__API_PER_MINUTE`) | все `/api/v1/*` |
 | `auth` | 10/мин (`RATE_LIMIT__AUTH_PER_MINUTE`) | `register`, `login`, `refresh`, дополнительно к `api` |
+| `scan` | 10/мин (`RATE_LIMIT__SCAN_PER_MINUTE`) | `scanItems`, дополнительно к `api`: каждый скан — платный вызов модели |
 
 Ответы содержат `X-RateLimit-Limit` и `X-RateLimit-Remaining`, ответ 429 ещё и `Retry-After`.
 Лимиты не применяются к `/health/*` и `/metrics`. Значение `0` отключает scope. Если Redis

@@ -16,4 +16,5 @@ class RateLimitPolicy:
 
     api_per_window: int
     auth_per_window: int
+    scan_per_window: int
     window_seconds: int = 60

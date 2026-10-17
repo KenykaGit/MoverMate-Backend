@@ -14,6 +14,7 @@ from uuid import UUID
 
 from app.application.common.pagination import CursorPageRequest
 from app.application.common.patch import UNSET, Patch
+from app.application.interfaces.item_recognizer import Photo
 from app.domain.inventory.box import BoxStatus
 from app.domain.inventory.item import ItemState
 from app.domain.inventory.room import Room
@@ -330,3 +331,19 @@ class SearchItemsDTO:
 class SuggestBoxesDTO:
     user_id: UUID
     item_id: UUID
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ScanItemsDTO:
+    user_id: UUID
+    project_id: UUID
+    photo: Photo
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ScannedItemDTO:
+    """A suggestion, not an item: the client shows the list, the user corrects it
+    and saves it with createItems."""
+
+    name: str
+    quantity: int

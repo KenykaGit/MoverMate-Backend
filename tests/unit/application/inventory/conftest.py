@@ -16,6 +16,7 @@ from app.domain.users.entity import User
 from tests.factories import make_project, make_user
 from tests.fakes import (
     FakeInventoryReadModel,
+    FakeItemRecognizer,
     FakeUnitOfWork,
     InMemoryAuditLogRepository,
     InMemoryBoxRepository,
@@ -43,6 +44,7 @@ class Preset:
     notifications: InMemoryNotificationRepository
     audit_log: InMemoryAuditLogRepository
     read_model: FakeInventoryReadModel
+    recognizer: FakeItemRecognizer
     uow: FakeUnitOfWork
 
     def make[T](self, use_case: type[T]) -> T:
@@ -85,6 +87,7 @@ def new_preset() -> Preset:
         notifications=notifications,
         audit_log=InMemoryAuditLogRepository(),
         read_model=FakeInventoryReadModel(users, rooms, boxes, items, notifications),
+        recognizer=FakeItemRecognizer(),
         uow=FakeUnitOfWork(),
     )
 

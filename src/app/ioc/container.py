@@ -3,6 +3,7 @@ from dishka import AsyncContainer, Provider, make_async_container
 from app.config import Settings
 from app.ioc.config_provider import ConfigProvider
 from app.ioc.db_provider import DatabaseProvider
+from app.ioc.llm_provider import LlmProvider
 from app.ioc.observability_provider import ObservabilityProvider
 from app.ioc.push_provider import PushProvider
 from app.ioc.redis_provider import RedisProvider
@@ -19,6 +20,7 @@ def create_container(settings: Settings, *extra_providers: Provider) -> AsyncCon
         RedisProvider(),
         SecurityProvider(),
         PushProvider(),
+        LlmProvider(),
         UseCaseProvider(),
         ObservabilityProvider(),
         *extra_providers,

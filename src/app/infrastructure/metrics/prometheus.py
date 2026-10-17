@@ -10,6 +10,15 @@ REDIS_ERRORS = Counter(
     "redis_errors_total", "Failed Redis operations (served in fail-open mode)", ["op"]
 )
 RATE_LIMITED = Counter("rate_limited_total", "Requests rejected by the rate limiter", ["scope"])
+LLM_REQUESTS = Counter(
+    "llm_requests_total", "Calls to the LLM API by outcome", ["operation", "outcome"]
+)
+LLM_REQUEST_DURATION = Histogram(
+    "llm_request_duration_seconds",
+    "LLM API latency, failed calls included",
+    ["operation"],
+    buckets=(0.5, 1, 2, 3, 5, 8, 13, 20, 30, 60),
+)
 
 
 def observe_http_request(*, method: str, route: str, status: int, duration: float) -> None:
@@ -19,6 +28,11 @@ def observe_http_request(*, method: str, route: str, status: int, duration: floa
 
 def record_rate_limited(scope: str) -> None:
     RATE_LIMITED.labels(scope).inc()
+
+
+def observe_llm_request(*, operation: str, outcome: str, duration: float) -> None:
+    LLM_REQUESTS.labels(operation, outcome).inc()
+    LLM_REQUEST_DURATION.labels(operation).observe(duration)
 
 
 def render_latest() -> tuple[bytes, str]:

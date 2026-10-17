@@ -123,6 +123,8 @@ Postgres создаст рядом **пустой** кластер. Поэтом
    | `CORS_ORIGINS` | Variable | JSON-список источников, например `["https://app.example.com"]`; по умолчанию `[]` |
    | `DOMAIN` | Variable | публичное имя сервиса для сертификата Let's Encrypt, например `api.example.com` |
    | `CERTBOT_EMAIL` | Variable, необязательная | e-mail аккаунта Let's Encrypt (уведомления о проблемах с аккаунтом); без неё аккаунт регистрируется без почты |
+   | `LLM__API_KEY` | Variable, masked + protected, необязательная | ключ аккаунта LLM-прокси Spirit для сканирования вещей по фото ([ADR 0013](adr/0013-photo-scanning-with-llm.md)); без него сканирование отвечает 503 `item_recognition_disabled`, остальное работает |
+   | `LLM__SCAN_MODEL` | Variable, необязательная | модель для сканирования в формате прокси `<provider>/<model>`; по умолчанию `openrouter/claude-haiku-5-5` |
 
    Значения без одинарных кавычек. Смена `POSTGRES_PASSWORD` не меняет пароль в уже созданной
    БД (Postgres читает его только при инициализации тома): нужен ещё `ALTER USER`. Смена

@@ -8,6 +8,7 @@ from typing import Any
 import pytest
 from dishka.integrations.fastapi import FastapiProvider
 
+from app.application.inventory.scan_items import PHOTO_MEDIA_TYPES
 from app.config import Settings
 from app.domain.inventory.box import BoxStatus
 from app.domain.inventory.item import ItemState
@@ -70,6 +71,7 @@ PROTECTED = {
     "GET /api/v1/projects/{project_id}/items",
     "POST /api/v1/projects/{project_id}/items",
     "POST /api/v1/projects/{project_id}/items/batch",
+    "POST /api/v1/projects/{project_id}/items/scan",
     "GET /api/v1/projects/{project_id}/items/search",
     "GET /api/v1/items/{item_id}",
     "PATCH /api/v1/items/{item_id}",
@@ -109,6 +111,7 @@ INVENTORY_OPERATION_IDS = {
     "GET /api/v1/projects/{project_id}/items": "listItems",
     "POST /api/v1/projects/{project_id}/items": "createItem",
     "POST /api/v1/projects/{project_id}/items/batch": "createItems",
+    "POST /api/v1/projects/{project_id}/items/scan": "scanItems",
     "GET /api/v1/projects/{project_id}/items/search": "searchItems",
     "GET /api/v1/items/{item_id}": "getItem",
     "PATCH /api/v1/items/{item_id}": "updateItem",
@@ -289,6 +292,10 @@ SPECIFIC_ERRORS = [
     ("PUT /api/v1/boxes/{box_id}/contents-reminder", "409"),
     ("PUT /api/v1/items/{item_id}/state", "409"),
     ("GET /api/v1/items/{item_id}", "404"),
+    ("POST /api/v1/projects/{project_id}/items/scan", "404"),
+    ("POST /api/v1/projects/{project_id}/items/scan", "413"),
+    ("POST /api/v1/projects/{project_id}/items/scan", "415"),
+    ("POST /api/v1/projects/{project_id}/items/scan", "503"),
     *((name, "404") for name in SUMMARY_OPERATION_IDS),
 ]
 
@@ -375,3 +382,17 @@ def test_labels_limit_the_number_of_chosen_boxes(schema: Schema) -> None:
 
     assert array["maxItems"] == MAX_LABELS_PER_REQUEST
     assert box_ids["required"] is False
+
+
+def test_a_scan_takes_the_image_itself_as_the_body(schema: Schema) -> None:
+    """No multipart and no base64: `fetch(url, {body: file})` with the file's type."""
+    operation = operations(schema)["POST /api/v1/projects/{project_id}/items/scan"]
+    body = operation["requestBody"]
+    binary = {"type": "string", "format": "binary"}
+
+    assert body["required"] is True
+    assert set(body["content"]) == PHOTO_MEDIA_TYPES
+    assert all(media["schema"] == binary for media in body["content"].values())
+    assert operation["responses"]["200"]["content"]["application/json"]["schema"] == {
+        "$ref": "#/components/schemas/ItemScan"
+    }

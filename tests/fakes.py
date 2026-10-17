@@ -35,6 +35,11 @@ from app.application.interfaces.idempotency import (
     IdempotencyState,
     JsonValue,
 )
+from app.application.interfaces.item_recognizer import (
+    AbstractItemRecognizer,
+    Photo,
+    RecognizedItem,
+)
 from app.application.interfaces.item_repository import AbstractItemRepository
 from app.application.interfaces.notification_context import (
     AbstractNotificationContextReader,
@@ -323,6 +328,21 @@ class FakeHealthProbe(AbstractHealthProbe):
             await asyncio.Event().wait()
         if not self.healthy:
             raise ConnectionError("dependency is down")
+
+
+class FakeItemRecognizer(AbstractItemRecognizer):
+    """Answers with `items`, or raises `error`; remembers the photos it was shown."""
+
+    def __init__(self, items: Iterable[RecognizedItem] = ()) -> None:
+        self.items = list(items)
+        self.error: Exception | None = None
+        self.photos: list[Photo] = []
+
+    async def recognize(self, photo: Photo) -> list[RecognizedItem]:
+        self.photos.append(photo)
+        if self.error is not None:
+            raise self.error
+        return list(self.items)
 
 
 class InMemoryProjectRepository(AbstractProjectRepository):

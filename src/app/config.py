@@ -10,7 +10,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Self
 
-from pydantic import BaseModel, Field, SecretStr, model_validator
+from pydantic import BaseModel, Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # HS256 needs a key at least as long as its 256-bit output (RFC 7518 §3.2).
@@ -60,6 +60,8 @@ class RateLimitSettings(BaseModel):
 
     api_per_minute: int = Field(default=120, ge=0)
     auth_per_minute: int = Field(default=10, ge=0)
+    scan_per_minute: int = Field(default=10, ge=0)
+    """Photo scans: every one is a paid call to the LLM."""
 
 
 class IdempotencySettings(BaseModel):
@@ -98,6 +100,31 @@ class WorkerSettings(BaseModel):
     """/health/ready reports `degraded` when a due notification waits longer."""
 
 
+class LlmSettings(BaseModel):
+    """An OpenAI-compatible Chat Completions API: the Spirit LLM proxy by default.
+
+    Used by photo scanning only: without `api_key` the scan endpoint answers 503
+    `item_recognition_disabled` and everything else works as usual.
+    """
+
+    base_url: str = Field(
+        default="https://llm-proxy.spirit.t-education.com/v1", pattern=r"^https?://\S+$"
+    )
+    api_key: SecretStr | None = None
+    scan_model: str = Field(default="openrouter/claude-haiku-5-5", min_length=1)
+    """`<provider>/<model>` as the proxy names it."""
+    timeout_seconds: float = Field(default=30.0, gt=0)
+    max_output_tokens: int = Field(default=1024, ge=1)
+
+    @field_validator("api_key", mode="before")
+    @classmethod
+    def _empty_key_is_none(cls, value: object) -> object:
+        # Compose passes unset variables as "": that means "disabled", not a key.
+        if value == "" or (isinstance(value, SecretStr) and value.get_secret_value() == ""):
+            return None
+        return value
+
+
 class Settings(BaseSettings):
     model_config = _SETTINGS_CONFIG
 
@@ -116,6 +143,7 @@ class Settings(BaseSettings):
     idempotency: IdempotencySettings = IdempotencySettings()
     push: PushSettings = PushSettings()
     worker: WorkerSettings = WorkerSettings()
+    llm: LlmSettings = LlmSettings()
 
     @model_validator(mode="after")
     def _check_prod_secrets(self) -> Self:

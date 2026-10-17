@@ -5,7 +5,7 @@
 | Сигнал | Где | Для чего |
 |---|---|---|
 | `GET /health/live` | процесс жив, зависимости не проверяются | перезапуск контейнера (Docker `HEALTHCHECK`) |
-| `GET /health/ready` | Postgres, Redis, очередь уведомлений | снимать ли инстанс с трафика; `version` показывает задеплоенную версию |
+| `GET /health/ready` | Postgres, Redis, очередь уведомлений, LLM (если сканирование включено) | снимать ли инстанс с трафика; `version` показывает задеплоенную версию |
 | `GET /metrics` | Prometheus, только изнутри сети (nginx отдаёт 404) | тренды и алерты |
 | логи api (stdout, JSON) | `docker compose logs api` | разбор конкретного запроса |
 | логи nginx (stdout, JSON) | `docker compose logs nginx` | что видел клиент, время апстрима |
@@ -17,13 +17,19 @@
 | `status` | HTTP | Значение |
 |---|---|---|
 | `ok` | 200 | всё работает |
-| `degraded` | 200 | Redis недоступен (`checks.redis`): идемпотентность и rate limit отключены, основной сценарий (включая логин) работает. Или отстаёт очередь уведомлений (`checks.notifications`): воркер или планировщик остановлен, воркер не успевает, или Redis недоступен давно (сигналы воркеру не доходят). Инстанс **не** снимается с трафика |
+| `degraded` | 200 | Redis недоступен (`checks.redis`): идемпотентность и rate limit отключены, основной сценарий (включая логин) работает. Или отстаёт очередь уведомлений (`checks.notifications`): воркер или планировщик остановлен, воркер не успевает, или Redis недоступен давно (сигналы воркеру не доходят). Или упал последний вызов модели для сканирования по фото (`checks.llm`, см. ниже). Инстанс **не** снимается с трафика |
 | `unavailable` | 503 | Postgres недоступен: сервис не может выполнить ни один сценарий |
 
 Каждая проверка ограничена таймаутом 2 секунды, проверки выполняются параллельно.
 Классификация зависимостей задаётся в `ObservabilityProvider`: Postgres — critical,
-Redis и `notifications` — auxiliary. Логика деградации находится в use case `CheckReadiness` и покрыта
+Redis, `notifications` и `llm` — auxiliary. Логика деградации находится в use case `CheckReadiness` и покрыта
 unit-тестами.
+
+`checks.llm` есть, только если задан `LLM__API_KEY`: выключенное сканирование — это
+настройка, а не сбой. Проверка не обращается к модели (каждый вызов платный и идёт секунды),
+а показывает исход последнего настоящего вызова (`LlmCallStatus`): `degraded` от упавшего
+скана до следующего успешного. Причина — в `outcome` события `llm_request_failed` и метрики
+`llm_requests_total`.
 
 ### Воркер уведомлений
 
@@ -46,7 +52,9 @@ unit-тестами.
 | `http_requests_total` | `method`, `route`, `status` | доля 5xx по маршрутам; всплеск 4xx — сломанный клиент или атака |
 | `http_request_duration_seconds` | `method`, `route` | p95/p99 латентности |
 | `redis_errors_total` | `op` (`rate_limit`, `idempotency_begin`…) | любой рост означает работу в деградированном режиме. `op="task_queue_pop"` считается в процессе воркера, у которого нет `/metrics`: там смотрите логи |
-| `rate_limited_total` | `scope=api\|auth` | клиенты упираются в лимит; рост `auth` — признак перебора паролей |
+| `rate_limited_total` | `scope=api\|auth\|scan` | клиенты упираются в лимит; рост `auth` — признак перебора паролей |
+| `llm_requests_total` | `operation=scan_items`, `outcome` | вызовы модели: `ok`; `timeout` (дольше `LLM__TIMEOUT_SECONDS`), `unreachable` (прокси недоступен), `rate_limited` (429: квота аккаунта прокси), `rejected` (прочие 4xx: ключ, заблокированная модель — чините настройки), `error` (5xx), `bad_answer` (модель ответила не JSON) |
+| `llm_request_duration_seconds` | `operation` | латентность модели, включая неудачные вызовы; таймаут nginx для сканирования — 45 с |
 
 `route` — шаблон пути (`/api/v1/projects/{project_id}`, а не сам id), поэтому кардинальность ограничена.
 Несуществующие пути схлопываются в `route="unmatched"`.
@@ -58,6 +66,7 @@ sum by (route) (rate(http_requests_total{status=~"5.."}[5m]))
   / sum by (route) (rate(http_requests_total[5m]))                         # доля 5xx
 histogram_quantile(0.95, sum by (le, route) (rate(http_request_duration_seconds_bucket[5m])))
 sum(rate(redis_errors_total[5m])) > 0                                       # деградация
+sum by (outcome) (rate(llm_requests_total{outcome!="ok"}[15m]))             # сбои сканирования
 ```
 
 ## Логи
@@ -95,6 +104,9 @@ SQLAlchemy) проходят через один конвейер. Каждая 
 | `box_deleted` | info | `box_id`, `items` | коробка удалена вместе с `items` вещами внутри |
 | `item_state_changed` | info | `item_id`, `from_state`, `to_state` | вещь упакована, выложена, потеряна или найдена |
 | `room_deleted` | info | `room_id`, `user_id` | удалена неиспользуемая комната |
+| `items_scanned` | info | `project_id`, `recognized`, `items` | фото распознано: модель назвала `recognized` позиций, после проверки и объединения осталось `items` |
+| `llm_request_completed` | info | `operation`, `model`, `duration_seconds`, `prompt_tokens`, `completion_tokens`, `items` | успешный вызов модели; токены — для контроля расхода квоты прокси |
+| **`llm_request_failed`** | **warning** | `operation`, `model`, `outcome`, `http_status`, `error`, `duration_seconds` | вызов модели не удался, клиент получил 503 `item_recognition_unavailable`; `outcome` — как в `llm_requests_total`, `error` — начало ответа прокси (до 300 символов) |
 | `redis_unavailable` | warning | `op`, `error` | операция Redis не удалась, сработал fail-open |
 | `readiness_check_failed` | warning | `dependency`, `error` | зависимость не прошла проверку `/health/ready` |
 | `idempotency_record_corrupted` | warning | ключ | запись в Redis не читается (например, после смены формата) |
@@ -123,7 +135,9 @@ schedule_id deliver_due_notifications.` (каждые 15 с) в `docker compose 
 
 Пароли, токены и хэши никогда не логируются. DTO с секретами помечены `field(repr=False)`,
 в pydantic-схемах используется `SecretStr`. `endpoint` push-подписки тоже секрет (кто его
-знает, может слать push в браузер): события содержат только хост push-сервиса.
+знает, может слать push в браузер): события содержат только хост push-сервиса. Ключ
+LLM-прокси (`LLM__API_KEY`) хранится как `SecretStr`, а фото и ответы модели целиком в логи
+не попадают.
 
 ### Логи nginx
 

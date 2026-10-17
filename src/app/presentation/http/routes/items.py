@@ -4,9 +4,10 @@ from typing import Annotated
 from uuid import UUID
 
 from dishka.integrations.fastapi import DishkaRoute, FromDishka
-from fastapi import APIRouter, Query, status
+from fastapi import APIRouter, Depends, Query, Request, status
 
 from app.application.common.pagination import MAX_PAGE_SIZE, CursorPageRequest
+from app.application.interfaces.item_recognizer import Photo
 from app.application.inventory.change_item_state import ChangeItemState
 from app.application.inventory.create_item import CreateItem
 from app.application.inventory.create_items import CreateItems
@@ -15,23 +16,27 @@ from app.application.inventory.dto import (
     DeleteItemDTO,
     GetItemDTO,
     ListItemsDTO,
+    ScanItemsDTO,
     SearchItemsDTO,
     SuggestBoxesDTO,
 )
 from app.application.inventory.get_item import GetItem
 from app.application.inventory.list_items import ListItems
+from app.application.inventory.scan_items import MAX_PHOTO_BYTES, PHOTO_MEDIA_TYPES, ScanItems
 from app.application.inventory.search_items import SearchItems
 from app.application.inventory.suggest_boxes import SuggestBoxes
 from app.application.inventory.update_item import UpdateItem
 from app.domain.inventory.item import ItemState
 from app.presentation.http.auth import CurrentUser
 from app.presentation.http.errors import error_doc
+from app.presentation.http.rate_limit import scan_rate_limit
 from app.presentation.http.schemas.inventory import (
     CreateItemRequest,
     CreateItemsRequest,
     Item,
     ItemPage,
     ItemPriority,
+    ItemScan,
     ItemSearchResult,
     ItemSuggestion,
     SetItemStateRequest,
@@ -107,6 +112,57 @@ async def create_items(
     """Several items from one room at once: all of them or none."""
     items = await create_items(body.to_dto(user_id=user.id, project_id=project_id))
     return [Item.from_dto(item) for item in items]
+
+
+@router.post(
+    "/projects/{project_id}/items/scan",
+    operation_id="scanItems",
+    dependencies=[Depends(scan_rate_limit)],
+    responses=error_doc(status.HTTP_413_CONTENT_TOO_LARGE, f"Larger than {MAX_PHOTO_BYTES} bytes")
+    | error_doc(status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, "Content-Type is not a supported image")
+    | error_doc(
+        status.HTTP_503_SERVICE_UNAVAILABLE,
+        "The model did not answer (retry after Retry-After) or scanning is not configured",
+    ),
+    openapi_extra={
+        "requestBody": {
+            "required": True,
+            "description": "The image itself, with its Content-Type",
+            "content": {
+                media_type: {"schema": {"type": "string", "format": "binary"}}
+                for media_type in sorted(PHOTO_MEDIA_TYPES)
+            },
+        }
+    },
+)
+async def scan_items(
+    project_id: UUID,
+    request: Request,
+    user: CurrentUser,
+    scan_items: FromDishka[ScanItems],
+) -> ItemScan:
+    """Names and quantities of the items in a photo, recognized by a vision model.
+
+    Nothing is saved: show the list, let the user fix it and send it to createItems.
+    """
+    photo = Photo(content=await _read_photo(request), media_type=_media_type(request))
+    items = await scan_items(ScanItemsDTO(user_id=user.id, project_id=project_id, photo=photo))
+    return ItemScan.from_dtos(items)
+
+
+async def _read_photo(request: Request) -> bytes:
+    """The body, cut one byte past the limit: the use case rejects an oversized photo,
+    and a huge body is never held in memory."""
+    body = bytearray()
+    async for chunk in request.stream():
+        body += chunk
+        if len(body) > MAX_PHOTO_BYTES:
+            break
+    return bytes(body[: MAX_PHOTO_BYTES + 1])
+
+
+def _media_type(request: Request) -> str:
+    return request.headers.get("content-type", "").split(";", maxsplit=1)[0].strip().lower()
 
 
 @router.get("/projects/{project_id}/items/search", operation_id="searchItems")

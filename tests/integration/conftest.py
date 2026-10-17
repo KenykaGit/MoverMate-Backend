@@ -43,6 +43,7 @@ from app.infrastructure.db.models import Base
 from app.ioc.config_provider import http_settings_from
 from app.ioc.container import create_container
 from app.presentation.http.app import create_app
+from tests.integration.llm_service import FakeLlmService
 from tests.integration.push_service import FakePushService
 
 PROJECT_ROOT = Path(__file__).parents[2]
@@ -164,7 +165,7 @@ def make_settings(
                 argon2_parallelism=1,
             ),
             # Enabled explicitly by the rate limit tests.
-            "rate_limit": RateLimitSettings(api_per_minute=0, auth_per_minute=0),
+            "rate_limit": RateLimitSettings(api_per_minute=0, auth_per_minute=0, scan_per_minute=0),
             "push": PushSettings(vapid_key_file=vapid_key_file),
         }
         # Never read a developer's .env or environment: tests must be reproducible.
@@ -212,6 +213,15 @@ async def client(client_factory: ClientFactory) -> AsyncIterator[AsyncClient]:
 async def push_service(tmp_path: Path) -> AsyncIterator[FakePushService]:
     """A Web Push service over HTTPS on localhost; see tests/integration/push_service.py."""
     service = FakePushService(tmp_path)
+    await service.start()
+    yield service
+    await service.stop()
+
+
+@pytest.fixture
+async def llm_service() -> AsyncIterator[FakeLlmService]:
+    """A Chat Completions API on localhost; see tests/integration/llm_service.py."""
+    service = FakeLlmService()
     await service.start()
     yield service
     await service.stop()

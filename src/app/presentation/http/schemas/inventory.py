@@ -34,6 +34,7 @@ from app.application.inventory.dto import (
     RenameRoomDTO,
     RoomDTO,
     RoomRefDTO,
+    ScannedItemDTO,
     ScheduleContentsReminderDTO,
     UpdateBoxDTO,
     UpdateItemDTO,
@@ -213,6 +214,27 @@ class ItemSuggestion(BaseModel):
     @classmethod
     def from_dto(cls, suggestion: BoxSuggestionDTO) -> Self:
         return cls(box=BoxRef.from_dto(suggestion.box), matches=suggestion.matches)
+
+
+class ScannedItem(BaseModel):
+    """The same shape as an ItemEntry of createItems."""
+
+    name: str
+    quantity: int
+
+    @classmethod
+    def from_dto(cls, item: ScannedItemDTO) -> Self:
+        return cls(name=item.name, quantity=item.quantity)
+
+
+class ItemScan(BaseModel):
+    """Suggestions from a photo, in the order the model listed them; may be empty."""
+
+    items: list[ScannedItem]
+
+    @classmethod
+    def from_dtos(cls, items: list[ScannedItemDTO]) -> Self:
+        return cls(items=[ScannedItem.from_dto(item) for item in items])
 
 
 class ProjectRef(BaseModel):

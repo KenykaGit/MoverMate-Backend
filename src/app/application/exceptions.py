@@ -124,6 +124,39 @@ class InvalidPaginationError(ApplicationError):
     """limit or offset is out of the allowed range."""
 
 
+class InvalidPhotoError(ApplicationError):
+    """The photo to scan is empty."""
+
+
+class PhotoTooLargeError(InvalidPhotoError):
+    def __init__(self, max_bytes: int) -> None:
+        super().__init__(f"The photo must not exceed {max_bytes} bytes")
+        self.max_bytes = max_bytes
+
+
+class UnsupportedPhotoTypeError(InvalidPhotoError):
+    def __init__(self, media_type: str, supported: frozenset[str]) -> None:
+        super().__init__(
+            f"Photos of type {media_type or 'unknown'} are not supported, "
+            f"send one of: {', '.join(sorted(supported))}"
+        )
+        self.media_type = media_type
+
+
+class ItemRecognitionUnavailableError(ApplicationError):
+    """The vision model did not answer or answered nonsense: worth retrying later."""
+
+    def __init__(self, reason: str = "Item recognition is temporarily unavailable") -> None:
+        super().__init__(reason)
+
+
+class ItemRecognitionDisabledError(ItemRecognitionUnavailableError):
+    """No model is configured (LLM__API_KEY is unset): retrying will not help."""
+
+    def __init__(self) -> None:
+        super().__init__("Item recognition is not configured on this server")
+
+
 class RequestInProgressError(ApplicationError):
     """A request with the same Idempotency-Key is being processed right now."""
 

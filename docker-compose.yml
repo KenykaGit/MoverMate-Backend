@@ -12,6 +12,10 @@ x-app-env: &app-env
   AUTH__SECRET_KEY: ${AUTH__SECRET_KEY:-dev-only-insecure-secret-key-change-me!!}
   RATE_LIMIT__API_PER_MINUTE: ${RATE_LIMIT__API_PER_MINUTE:-120}
   RATE_LIMIT__AUTH_PER_MINUTE: ${RATE_LIMIT__AUTH_PER_MINUTE:-10}
+  RATE_LIMIT__SCAN_PER_MINUTE: ${RATE_LIMIT__SCAN_PER_MINUTE:-10}
+  # Photo scanning through the LLM proxy; without a key it answers 503, the rest works.
+  LLM__API_KEY: ${LLM__API_KEY:-}
+  LLM__SCAN_MODEL: ${LLM__SCAN_MODEL:-openrouter/claude-haiku-5-5}
   FORWARDED_ALLOW_IPS: "*"
 
 services:

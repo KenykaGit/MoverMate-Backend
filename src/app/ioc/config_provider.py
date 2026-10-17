@@ -5,6 +5,7 @@ from app.config import (
     AuthSettings,
     DatabaseSettings,
     IdempotencySettings,
+    LlmSettings,
     PushSettings,
     RateLimitSettings,
     RedisSettings,
@@ -54,6 +55,10 @@ class ConfigProvider(Provider):
         return settings.worker
 
     @provide
+    def llm(self, settings: Settings) -> LlmSettings:
+        return settings.llm
+
+    @provide
     def refresh_token_settings(self, auth: AuthSettings) -> RefreshTokenSettings:
         return RefreshTokenSettings(ttl=auth.refresh_token_ttl)
 
@@ -65,5 +70,7 @@ class ConfigProvider(Provider):
     def rate_limit_policy(self, settings: Settings) -> RateLimitPolicy:
         limits: RateLimitSettings = settings.rate_limit
         return RateLimitPolicy(
-            api_per_window=limits.api_per_minute, auth_per_window=limits.auth_per_minute
+            api_per_window=limits.api_per_minute,
+            auth_per_window=limits.auth_per_minute,
+            scan_per_window=limits.scan_per_minute,
         )

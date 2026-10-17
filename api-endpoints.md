@@ -285,6 +285,7 @@ AuthTokens = { access_token, token_type: "bearer", expires_in: number, user: Use
 | `GET /projects/{project_id}/items` | `listItems` | У | → `Page<Item>`, по `priority, lower(name), id` |
 | `POST /projects/{project_id}/items` | `createItem` | У | → 201 `Item` |
 | `POST /projects/{project_id}/items/batch` | `createItems` | У | → 201 `Item[]` |
+| `POST /projects/{project_id}/items/scan` | `scanItems` | У | тело — фото (`image/jpeg\|png\|webp\|gif`, до 5 МиБ) → `{ items: [{ name, quantity }] }`; ничего не сохраняет, список отправляется в `createItems`. 503, если модель недоступна |
 | `GET /items/{item_id}` | `getItem` | У | → `Item` |
 | `PATCH /items/{item_id}` | `updateItem` | У | `{ name, quantity, priority, source_room_id }` → `Item`; 422 `ROOM_KIND_MISMATCH` |
 | `PUT /items/{item_id}/state` | `setItemState` | У | `{ state, box_id? }` → `Item`; 409 `ITEM_STATE_TRANSITION` |

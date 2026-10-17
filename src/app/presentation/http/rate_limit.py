@@ -55,3 +55,4 @@ def rate_limit(scope: str, limit_of: Callable[[RateLimitPolicy], int]) -> RateLi
 
 api_rate_limit = rate_limit("api", lambda policy: policy.api_per_window)
 auth_rate_limit = rate_limit("auth", lambda policy: policy.auth_per_window)
+scan_rate_limit = rate_limit("scan", lambda policy: policy.scan_per_window)
