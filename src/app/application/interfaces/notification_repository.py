@@ -1,5 +1,6 @@
 from abc import ABC, abstractmethod
 from collections.abc import Iterable
+from datetime import datetime
 
 from app.domain.common.ids import ProjectId, UserId
 from app.domain.common.reminders import MovingReminderOffset
@@ -18,6 +19,19 @@ class AbstractNotificationRepository(ABC):
     @abstractmethod
     async def add(self, notification: Notification) -> None:
         """Stage a new notification."""
+
+    @abstractmethod
+    async def claim_next_due(self, now: datetime) -> Notification | None:
+        """The pending notification due longest ago (scheduled_at <= now), locked
+        until the transaction ends; None if nothing is due.
+
+        Rows locked by another worker are skipped, not waited for: several
+        workers share the queue without sending anything twice.
+        """
+
+    @abstractmethod
+    async def update(self, notification: Notification) -> None:
+        """Stage changes of an existing notification (status, attempts...)."""
 
     @abstractmethod
     async def cancel_pending(self, project_id: ProjectId, *, user_id: UserId | None = None) -> int:

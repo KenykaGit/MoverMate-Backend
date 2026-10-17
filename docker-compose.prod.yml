@@ -3,12 +3,12 @@
 # never committed):
 #   POSTGRES_USER, POSTGRES_PASSWORD, POSTGRES_DB, AUTH__SECRET_KEY (>= 32 random chars),
 #   CORS_ORIGINS, DOMAIN (public name for the TLS certificate), optionally CERTBOT_EMAIL,
-#   RATE_LIMIT__API_PER_MINUTE, RATE_LIMIT__AUTH_PER_MINUTE.
+#   RATE_LIMIT__API_PER_MINUTE, RATE_LIMIT__AUTH_PER_MINUTE, PUSH__VAPID_SUBJECT.
 # Provided by the deploy job: IMAGE (registry path), IMAGE_TAG (git short sha).
 # The deploy job also copies docker/nginx/ and docker/certbot/ next to this file.
 x-app: &app
   image: ${IMAGE:?IMAGE is required}:${IMAGE_TAG:?IMAGE_TAG is required}
-  environment:
+  environment: &app-environment
     ENV: prod
     APP_VERSION: ${IMAGE_TAG}
     LOG_JSON: "true"
@@ -42,7 +42,8 @@ services:
   # Valkey: the BSD-licensed fork of Redis, same protocol and client (ADR 0003).
   redis:
     image: valkey/valkey:9.1.2-alpine3.24
-    # Only auxiliary data lives here: evicting keys under memory pressure is fine.
+    # Only auxiliary data lives here: evicting keys under memory pressure is fine, the
+    # worker's wake-up messages included (the notifications table is the queue).
     command: ["valkey-server", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru"]
     healthcheck:
       test: ["CMD", "valkey-cli", "ping"]
@@ -63,9 +64,58 @@ services:
 
   api:
     <<: *app
+    environment:
+      <<: *app-environment
+      PUSH__VAPID_KEY_FILE: /var/lib/app/vapid/private_key.pem
+    # Shared with the worker: the api hands out the public half of the key.
+    volumes:
+      - vapid:/var/lib/app/vapid
     depends_on:
       db:
         condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # Sends due notifications (Web Push) from the notifications table; no ports.
+  # Woken up through the Redis queue by `scheduler` (taskiq, ADR 0011).
+  worker:
+    <<: *app
+    command: ["taskiq", "worker", "app.worker.entry:broker", "--no-configure-logging", "--workers", "1", "--wait-tasks-timeout", "30"]
+    # Longer than --wait-tasks-timeout: Docker's default 10 s would cut the running task.
+    stop_grace_period: 35s
+    environment:
+      <<: *app-environment
+      PUSH__VAPID_KEY_FILE: /var/lib/app/vapid/private_key.pem
+      # Contact for push services: by default the site itself.
+      PUSH__VAPID_SUBJECT: ${PUSH__VAPID_SUBJECT:-https://${DOMAIN:?DOMAIN is required}}
+    volumes:
+      - vapid:/var/lib/app/vapid
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      # Touched on start and after every successful run (every 15 s): stale means no
+      # deliveries, whether the worker, the scheduler, Redis or Postgres is the cause.
+      test: ["CMD", "python", "-c", "import os, sys, time; sys.exit(time.time() - os.path.getmtime('/tmp/worker-heartbeat') > 60)"]
+      interval: 15s
+      timeout: 3s
+      start_period: 20s
+      retries: 3
+    restart: unless-stopped
+
+  # Puts a wake-up message for the worker into Redis every 15 s. Exactly one is
+  # enough; a second one would only cause empty runs.
+  scheduler:
+    <<: *app
+    command: ["taskiq", "scheduler", "app.worker.entry:scheduler", "--no-configure-logging"]
+    # The image's HEALTHCHECK probes the api's HTTP port; the scheduler has none. If
+    # it dies, the container restarts; stalled deliveries show up in the worker's health.
+    healthcheck:
+      disable: true
+    depends_on:
       redis:
         condition: service_healthy
     restart: unless-stopped
@@ -122,3 +172,4 @@ volumes:
   letsencrypt:  # certbot account and certificates: keep it, re-issuing is rate-limited
   acme-webroot:
   tls:
+  vapid:  # the VAPID key pair of the worker: losing it breaks every push subscription

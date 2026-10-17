@@ -18,12 +18,19 @@ commit ─▶ MR ─▶ check (параллельно) ─▶ build ─▶ merge
    docker-конфиг с IAM-токеном Spirit в `$DEPLOY_DIR/.docker`, `docker compose` читает его через
    `DOCKER_CONFIG`) копирует `docker-compose.prod.yml`, prod-конфиг nginx (`docker/nginx/`)
    и скрипт certbot (`docker/certbot/`) в `$DEPLOY_DIR` и выполняет на сервере:
-   1. `docker compose pull api`;
+   1. `docker compose pull api` — тот же образ (и тег) используют `worker` и `scheduler`;
    2. `docker compose run --rm migrate` — `alembic upgrade head` тем же образом. Если миграция
       упала, job красный, а старый api продолжает обслуживать трафик;
-   3. `docker compose up -d --wait api certbot nginx` — ждёт HEALTHCHECK контейнеров. certbot
-      при первом запуске кладёт self-signed заглушку, выпускает сертификат Let's Encrypt для
-      `DOMAIN` и затем сам продлевает его ([ADR 0009](adr/0009-tls-letsencrypt-certbot.md));
+   3. `docker compose up -d --wait api worker scheduler certbot nginx` — ждёт HEALTHCHECK
+      контейнеров (у `scheduler` его нет: ждётся запуск). Старый `worker` получает SIGTERM,
+      taskiq ждёт текущую задачу до 30 с (`--wait-tasks-timeout`, `stop_grace_period: 35s`);
+      уведомление, прерванное до коммита, остаётся `PENDING` и уйдёт с новым воркером
+      ([ADR 0011](adr/0011-notification-worker.md)). Сигналы, поставленные `scheduler`, пока
+      воркер перезапускался, ждут в Redis и разбираются пустыми запусками. Новый воркер healthy
+      сразу после старта (heartbeat при `WORKER_STARTUP`) и остаётся таким, пока запуски
+      задачи проходят успешно. certbot при первом запуске кладёт self-signed
+      заглушку, выпускает сертификат Let's Encrypt для `DOMAIN` и затем сам продлевает его
+      ([ADR 0009](adr/0009-tls-letsencrypt-certbot.md));
    4. `nginx -t && nginx -s reload` — конфиг nginx едет вместе с коммитом;
    5. smoke-тест: `https://127.0.0.1/health/ready` должен вернуть `version` нового коммита
       (`curl -k`: сразу после первого деплоя ещё может отдаваться заглушка). Если доверенного
@@ -57,20 +64,24 @@ commit ─▶ MR ─▶ check (параллельно) ─▶ build ─▶ merge
 ## Откат
 
 - **Код:** перезапустите job `deploy` из пайплайна последнего хорошего коммита. Образ уже
-  лежит в registry, сборка не нужна.
+  лежит в registry, сборка не нужна. `worker` и `scheduler` откатываются вместе с api: у них
+  один тег образа.
 - **Схема:** миграции обратно совместимы (см. expand/contract), поэтому старый код работает
   на новой схеме и откат кода не требует `downgrade`. `alembic downgrade` на проде — крайняя
   мера: делается вручную после бэкапа (`docker compose exec db pg_dump ...`).
 - **Конфиг nginx** откатывается вместе с коммитом: deploy копирует `docker/nginx/` и делает reload.
-  Тома `letsencrypt` и `tls` откат не трогает: сертификат остаётся на месте.
+  Тома `letsencrypt` и `tls` откат не трогает: сертификат остаётся на месте. Том `vapid`
+  тоже: ключ VAPID и подписки браузеров переживают откат.
 
 ## Обновление версий инфраструктуры
 
 Все версии закреплены точно: Python-зависимости `==` в `pyproject.toml` плюс `uv.lock`,
 Python в `.python-version`, uv в `[tool.uv] required-version`, Docker-образы — полным тегом
 (`postgres:18.6-alpine3.24`, `valkey/valkey:9.1.2-alpine3.24`, `nginx:1.30.5-alpine3.24`…)
-в `docker-compose*.yml`, `.gitlab-ci.yml` и `tests/integration/conftest.py`. Обновление —
-обычный MR: поменять версии во всех местах, `uv lock`, `make check`.
+в `docker-compose*.yml`, `.gitlab-ci.yml` и `tests/integration/conftest.py`. Транзитивные
+зависимости pywebpush (`aiohttp`, `multidict`) закреплены через
+`[tool.uv] constraint-dependencies` на релизах не моложе двух недель. Обновление — обычный
+MR: поменять версии во всех местах, `uv lock`, `make check`.
 
 **Мажорная версия PostgreSQL** (например, 17 → 18) не читает каталог данных предыдущей.
 Кроме того, с 18-й версии образ монтирует том в `/var/lib/postgresql` (данные в
@@ -122,7 +133,14 @@ Postgres создаст рядом **пустой** кластер. Поэтом
    Проверка после деплоя: `curl -I https://$DOMAIN/health/live`, а при проблемах —
    `docker compose logs certbot`. Том `letsencrypt` не удаляйте: повторный выпуск ограничен
    лимитами LE (5 одинаковых сертификатов в неделю).
-6. Если перед nginx появится балансировщик, который сам завершает TLS, верните прод на
+6. Web Push ([ADR 0011](adr/0011-notification-worker.md)): VM нужен исходящий HTTPS (`:443`)
+   к push-сервисам браузеров (`fcm.googleapis.com`, `updates.push.services.mozilla.com`,
+   `*.push.apple.com` и др.). Ключ VAPID создаётся сам при первом использовании в томе `vapid`
+   (`/var/lib/app/vapid/private_key.pem`, общий для api и worker). **Том `vapid` не удаляйте**,
+   как и `pg-data`: с новым ключом все подписки браузеров перестают работать (push-сервисы
+   отвечают 403), и клиентам нужно подписаться заново. Контакт VAPID (`sub`) — CI-переменная
+   `PUSH__VAPID_SUBJECT` (`mailto:` или `https://`); без неё — `https://$DOMAIN`.
+7. Если перед nginx появится балансировщик, который сам завершает TLS, верните прод на
    HTTP-конфиг [nginx.conf](../docker/nginx/nginx.conf) и раскомментируйте `set_real_ip_from` в
    [http.conf](../docker/nginx/http.conf), иначе rate limit будет считать все запросы с IP
    балансировщика.

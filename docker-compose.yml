@@ -62,10 +62,62 @@ services:
       context: .
       args:
         APP_VERSION: dev
-    environment: *app-env
+    environment:
+      <<: *app-env
+      PUSH__VAPID_KEY_FILE: /var/lib/app/vapid/private_key.pem
+    # Shared with the worker: the api hands out the public half of the key.
+    volumes:
+      - vapid:/var/lib/app/vapid
     depends_on:
       migrate:
         condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+
+  # Sends due notifications (Web Push) from the notifications table; no ports.
+  # Woken up through the Redis queue by `scheduler` (taskiq, ADR 0011).
+  worker:
+    build:
+      context: .
+      args:
+        APP_VERSION: dev
+    command: ["taskiq", "worker", "app.worker.entry:broker", "--no-configure-logging", "--workers", "1", "--wait-tasks-timeout", "30"]
+    # Longer than --wait-tasks-timeout: Docker's default 10 s would cut the running task.
+    stop_grace_period: 35s
+    environment:
+      <<: *app-env
+      PUSH__VAPID_KEY_FILE: /var/lib/app/vapid/private_key.pem
+      PUSH__VAPID_SUBJECT: ${PUSH__VAPID_SUBJECT:-mailto:admin@example.com}
+    volumes:
+      - vapid:/var/lib/app/vapid
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    healthcheck:
+      # Touched on start and after every successful run (every 15 s): stale means no
+      # deliveries, whether the worker, the scheduler, Redis or Postgres is the cause.
+      test: ["CMD", "python", "-c", "import os, sys, time; sys.exit(time.time() - os.path.getmtime('/tmp/worker-heartbeat') > 60)"]
+      interval: 15s
+      timeout: 3s
+      start_period: 20s
+      retries: 3
+
+  # Puts a wake-up message for the worker into Redis every 15 s. Exactly one is
+  # enough; a second one would only cause empty runs.
+  scheduler:
+    build:
+      context: .
+      args:
+        APP_VERSION: dev
+    command: ["taskiq", "scheduler", "app.worker.entry:scheduler", "--no-configure-logging"]
+    environment: *app-env
+    # The image's HEALTHCHECK probes the api's HTTP port; the scheduler has none. If
+    # it dies, the container exits; stalled deliveries show up in the worker's health.
+    healthcheck:
+      disable: true
+    depends_on:
       redis:
         condition: service_healthy
 
@@ -89,3 +141,4 @@ services:
 
 volumes:
   pg-data:
+  vapid:  # the VAPID key pair: browsers subscribed with its public key

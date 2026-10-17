@@ -29,6 +29,10 @@ from app.application.interfaces.idempotency import (
     IdempotencyState,
     JsonValue,
 )
+from app.application.interfaces.notification_context import (
+    AbstractNotificationContextReader,
+    NotificationContext,
+)
 from app.application.interfaces.notification_repository import AbstractNotificationRepository
 from app.application.interfaces.password_hasher import AbstractPasswordHasher
 from app.application.interfaces.project_reader import (
@@ -38,6 +42,16 @@ from app.application.interfaces.project_reader import (
     UserRefDTO,
 )
 from app.application.interfaces.project_repository import AbstractProjectRepository
+from app.application.interfaces.push_keys import AbstractPushKeys
+from app.application.interfaces.push_sender import (
+    AbstractPushSender,
+    PushMessage,
+    PushOutcome,
+    PushResult,
+)
+from app.application.interfaces.push_subscription_repository import (
+    AbstractPushSubscriptionRepository,
+)
 from app.application.interfaces.rate_limiter import AbstractRateLimiter, RateLimitDecision
 from app.application.interfaces.refresh_token_repository import AbstractRefreshTokenRepository
 from app.application.interfaces.room_repository import AbstractRoomRepository
@@ -52,6 +66,11 @@ from app.domain.common.ids import ProjectId, RoomId, UserId
 from app.domain.common.reminders import MovingReminderOffset
 from app.domain.inventory.room import Room
 from app.domain.notifications.notification import MovingDateReminder, Notification
+from app.domain.notifications.push_subscription import (
+    PushEndpoint,
+    PushSubscription,
+    PushSubscriptionId,
+)
 from app.domain.projects.entity import Project
 from app.domain.tokens.entity import RefreshToken, RefreshTokenId, TokenFamilyId
 from app.domain.users.entity import User
@@ -409,6 +428,20 @@ class InMemoryNotificationRepository(AbstractNotificationRepository):
     async def add(self, notification: Notification) -> None:
         self.notifications.append(replace(notification))
 
+    async def claim_next_due(self, now: datetime) -> Notification | None:
+        due = [n for n in self.notifications if n.is_pending and n.scheduled_at <= now]
+        if not due:
+            return None
+        return replace(min(due, key=lambda n: (n.scheduled_at, n.id)))
+
+    async def update(self, notification: Notification) -> None:
+        index = next(i for i, n in enumerate(self.notifications) if n.id == notification.id)
+        self.notifications[index] = replace(notification)
+
+    def get(self, notification: Notification) -> Notification:
+        """The stored version of `notification`."""
+        return next(n for n in self.notifications if n.id == notification.id)
+
     async def cancel_pending(self, project_id: ProjectId, *, user_id: UserId | None = None) -> int:
         return self._cancel(
             lambda n: n.project_id == project_id and (user_id is None or n.user_id == user_id)
@@ -439,3 +472,59 @@ class InMemoryAuditLogRepository(AbstractAuditLogRepository):
 
     async def add(self, entry: AuditEntry) -> None:
         self.entries.append(entry)
+
+
+class InMemoryPushSubscriptionRepository(AbstractPushSubscriptionRepository):
+    def __init__(self, subscriptions: Iterable[PushSubscription] = ()) -> None:
+        self.subscriptions: dict[PushSubscriptionId, PushSubscription] = {
+            s.id: replace(s) for s in subscriptions
+        }
+
+    async def add(self, subscription: PushSubscription) -> PushSubscription:
+        existing = await self.get_by_endpoint(subscription.endpoint)
+        if existing is not None:  # the race the real one resolves with ON CONFLICT
+            existing.renew(user_id=subscription.user_id, keys=subscription.keys)
+            subscription = existing
+        self.subscriptions[subscription.id] = replace(subscription)
+        return replace(subscription)
+
+    async def get_by_endpoint(self, endpoint: PushEndpoint) -> PushSubscription | None:
+        found = next((s for s in self.subscriptions.values() if s.endpoint == endpoint), None)
+        return None if found is None else replace(found)
+
+    async def list_active_for_user(self, user_id: UserId) -> list[PushSubscription]:
+        return [
+            replace(s) for s in self.subscriptions.values() if s.user_id == user_id and s.is_active
+        ]
+
+    async def update(self, subscription: PushSubscription) -> None:
+        self.subscriptions[subscription.id] = replace(subscription)
+
+
+class FakePushKeys(AbstractPushKeys):
+    KEY = "BFakeApplicationServerKey"
+
+    def public_key(self) -> str:
+        return self.KEY
+
+
+class FakePushSender(AbstractPushSender):
+    """Answers with `results[endpoint]` (DELIVERED by default) and records what it sent."""
+
+    def __init__(self) -> None:
+        self.results: dict[str, PushResult] = {}
+        self.sent: list[tuple[PushSubscription, PushMessage]] = []
+
+    async def send(self, subscription: PushSubscription, message: PushMessage) -> PushResult:
+        self.sent.append((subscription, message))
+        return self.results.get(subscription.endpoint.value, PushResult(PushOutcome.DELIVERED))
+
+
+class FakeNotificationContextReader(AbstractNotificationContextReader):
+    """Returns `context` for every notification; tests set it to the facts they need."""
+
+    def __init__(self, context: NotificationContext) -> None:
+        self.context = context
+
+    async def get(self, notification: Notification) -> NotificationContext:  # noqa: ARG002
+        return self.context

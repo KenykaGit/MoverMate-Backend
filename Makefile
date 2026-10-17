@@ -15,7 +15,7 @@ install: ## Install dependencies from uv.lock and the pre-commit hooks
 	uv run pre-commit install
 
 .PHONY: up
-up: ## Start the whole stack (db, redis, migrate, api, nginx on :8000)
+up: ## Start the whole stack (db, redis, migrate, api, worker, scheduler, nginx on :8000)
 	docker compose up --build -d --wait
 
 .PHONY: down
@@ -27,8 +27,8 @@ infra: ## Start only db and redis (for running the app/tests on the host)
 	docker compose up -d --wait db redis
 
 .PHONY: logs
-logs: ## Follow api and nginx logs
-	docker compose logs -f api nginx
+logs: ## Follow api, worker, scheduler and nginx logs
+	docker compose logs -f api worker scheduler nginx
 
 .PHONY: db-reset
 db-reset: ## DESTRUCTIVE: drop the local database volume (app_test is re-created on start)

@@ -7,6 +7,7 @@ and migrations read settings; every other layer receives plain values.
 
 from datetime import timedelta
 from enum import StrEnum
+from pathlib import Path
 from typing import Self
 
 from pydantic import BaseModel, Field, SecretStr, model_validator
@@ -66,6 +67,37 @@ class IdempotencySettings(BaseModel):
     completed_ttl_seconds: int = Field(default=24 * 60 * 60, ge=1)
 
 
+class PushSettings(BaseModel):
+    """Web Push with VAPID (RFC 8292): how the worker signs and sends messages."""
+
+    vapid_private_key: SecretStr | None = None
+    """PEM of a P-256 key. Unset: the key is read from `vapid_key_file`, and
+    generated there on first use, so that no key has to be issued by hand."""
+    vapid_key_file: Path = Path(".vapid/private_key.pem")
+    vapid_subject: str = Field(
+        default="mailto:admin@example.com", pattern=r"^(mailto:|https://)\S+$"
+    )
+    """Contact for push services (the `sub` claim): a mailto: or https:// URL."""
+    ttl_seconds: int = Field(default=24 * 60 * 60, ge=0)
+    """How long a push service keeps a message for an offline device."""
+    timeout_seconds: float = Field(default=10.0, gt=0)
+
+
+class WorkerSettings(BaseModel):
+    """The notification worker on taskiq (app.worker): scheduler, Redis queue, worker."""
+
+    interval_seconds: int = Field(default=15, ge=1)
+    """How often the scheduler wakes the worker up (taskiq `interval` schedule)."""
+    queue_name: str = "taskiq:notifications"
+    """The Redis list of the broker (in the REDIS__URL database)."""
+    batch_size: int = Field(default=100, ge=1)
+    """Notifications sent per wake-up at most; the rest waits for the next one."""
+    heartbeat_file: Path = Path("/tmp/worker-heartbeat")  # noqa: S108  # container-local
+    """Touched on start and after every successful run; the healthcheck reads its age."""
+    max_lag_seconds: int = Field(default=5 * 60, ge=1)
+    """/health/ready reports `degraded` when a due notification waits longer."""
+
+
 class Settings(BaseSettings):
     model_config = _SETTINGS_CONFIG
 
@@ -82,6 +114,8 @@ class Settings(BaseSettings):
     auth: AuthSettings = AuthSettings()
     rate_limit: RateLimitSettings = RateLimitSettings()
     idempotency: IdempotencySettings = IdempotencySettings()
+    push: PushSettings = PushSettings()
+    worker: WorkerSettings = WorkerSettings()
 
     @model_validator(mode="after")
     def _check_prod_secrets(self) -> Self:

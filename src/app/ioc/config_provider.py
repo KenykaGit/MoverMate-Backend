@@ -5,9 +5,11 @@ from app.config import (
     AuthSettings,
     DatabaseSettings,
     IdempotencySettings,
+    PushSettings,
     RateLimitSettings,
     RedisSettings,
     Settings,
+    WorkerSettings,
 )
 from app.presentation.http.settings import HttpSettings, RateLimitPolicy
 
@@ -42,6 +44,14 @@ class ConfigProvider(Provider):
     @provide
     def idempotency(self, settings: Settings) -> IdempotencySettings:
         return settings.idempotency
+
+    @provide
+    def push(self, settings: Settings) -> PushSettings:
+        return settings.push
+
+    @provide
+    def worker(self, settings: Settings) -> WorkerSettings:
+        return settings.worker
 
     @provide
     def refresh_token_settings(self, auth: AuthSettings) -> RefreshTokenSettings:

@@ -32,12 +32,15 @@
 | GET | `/api/v1/projects/{id}/collaborators` (`listCollaborators`) | 200 `CollaboratorResponse[]`, владелец первым | 404 `project_not_found` |
 | POST | `/api/v1/projects/{id}/collaborators` (`addCollaborator`) `{username}` | 201 `CollaboratorResponse`, 200 если уже участник | 404 `project_not_found` / `user_not_found` |
 | DELETE | `/api/v1/projects/{id}/collaborators/{user_id}` (`removeCollaborator`) | 204 | 404 `project_not_found`, 409 `cannot_remove_owner` |
+| GET | `/api/v1/push/vapid-public-key` (`getVapidPublicKey`) | 200 `{public_key}` | — (без аутентификации) |
+| PUT | `/api/v1/push/subscriptions` (`upsertPushSubscription`) `{endpoint, keys: {p256dh, auth}}` | 204, upsert по `endpoint` | 401, 422 `invalid_push_subscription` |
+| DELETE | `/api/v1/push/subscriptions?endpoint=` (`deletePushSubscription`) | 204 всегда | 401 |
 | GET | `/health/live` | 200 `{"status":"ok"}` | — |
 | GET | `/health/ready` | 200 `ok`/`degraded` | 503 `unavailable` |
 
-На всех `/api/v1/*` возможны 429 `rate_limited` и 500 `internal_error`. Эндпоинты `users` и
-`projects` требуют `Authorization: Bearer <access_token>`. Явный `operationId` (в скобках) пока
-есть только у маршрутов проектов. Если api недоступен, nginx отвечает
+На всех `/api/v1/*` возможны 429 `rate_limited` и 500 `internal_error`. Эндпоинты `users`,
+`projects` и `push/subscriptions` требуют `Authorization: Bearer <access_token>`. Явный
+`operationId` (в скобках) пока есть только у маршрутов проектов и push. Если api недоступен, nginx отвечает
 503 `service_unavailable` в том же формате и с `Retry-After`.
 
 ## Формат ошибок
@@ -129,7 +132,7 @@
 | первый запрос завершился ошибкой | ключ освобождается, повтор выполнится заново |
 | Redis недоступен | запрос выполняется без защиты от повторов (fail-open) |
 
-Состояние `pending` живёт 30 секунд: упавший воркер не блокирует ключ на сутки.
+Состояние `pending` живёт 30 секунд: упавший процесс api не блокирует ключ на сутки.
 
 ## Проекты
 
@@ -164,6 +167,31 @@
   `updated_at`. `CollaboratorResponse`: `user {id, username}`, `is_owner`, `created_at`
   (время вступления).
 - **Удаление аккаунта.** Владелец активных проектов получает 409 `user_owns_projects`.
+
+## Web Push
+
+Уведомления (назначение на задачу, срок задачи, опись коробки, дата переезда) отправляет
+воркер ([ADR 0011](adr/0011-notification-worker.md)), API только регистрирует браузеры.
+
+- **`GET /push/vapid-public-key`** → `{"public_key": "..."}`: `applicationServerKey` для
+  `pushManager.subscribe()` (base64url, P-256). Без аутентификации, ключ стабилен.
+- **`PUT /push/subscriptions`.** Тело — `PushSubscription.toJSON()` браузера как есть:
+  `{endpoint, expirationTime, keys: {p256dh, auth}}`; `expirationTime` игнорируется. Ответ 204.
+  Upsert по `endpoint`: повтор ничего не ломает, браузер, подписанный под другим аккаунтом,
+  переходит к текущему пользователю, отключённая подписка оживает с новыми ключами.
+  `endpoint` — https-URL до 2048 символов, ключи — base64url; иначе 422
+  `invalid_push_subscription`.
+- **`DELETE /push/subscriptions?endpoint=...`** → всегда 204. Отключает подписку, только
+  если она принадлежит вызывающему: ответ не раскрывает, чей это браузер.
+- **Клиенту.** Вызывайте `PUT` после `subscribe()` и при каждом запуске приложения
+  (браузер мог сменить подписку), `DELETE` — при выходе из аккаунта. Подписку, на которую
+  push-сервис ответил 404/410, сервер отключает сам.
+- **Payload** (JSON, читает service worker): `title`, `body`, `url` (путь фронтенда: `/plan`,
+  `/b/{qr_token}` или `/dashboard`), `type` (`TASK_ASSIGNED`, `TASK_REMINDER`,
+  `BOX_CONTENTS_REMINDER`, `MOVING_DATE_REMINDER`), `project_id`, `notification_id`, а также
+  `task_id` или `box_id`. Тексты на русском, содержимое коробок в них не попадает; срок задачи
+  показан в часовом поясе проекта.
+- Уведомления пользователю без активных подписок не копятся: они получают статус `SKIPPED`.
 
 ## Аутентификация
 

@@ -11,12 +11,16 @@ dependencies = [
     "dishka==1.10.1",
     "fastapi==0.143.0",
     "prometheus-client==0.26.0",
+    "py-vapid==1.9.4",
     "pydantic==2.14.1",
     "pydantic-settings==2.15.0",
     "pyjwt==2.15.1",
+    "pywebpush==2.5.0",
     "redis==8.1.0",
     "sqlalchemy[asyncio]==2.1.4",
     "structlog==26.1.0",
+    "taskiq==0.13.0",
+    "taskiq-redis==1.2.4",
     "uvicorn[standard]==0.54.0",
 ]
 
@@ -40,6 +44,8 @@ build-backend = "uv_build"
 [tool.uv]
 # The same uv as in the Dockerfile and CI images.
 required-version = "==0.13.*"
+# Transitive dependencies of pywebpush pinned to releases at least two weeks old.
+constraint-dependencies = ["aiohttp==3.14.3", "multidict==6.9.1"]
 
 [tool.uv.build-backend]
 module-name = "app"
@@ -141,5 +147,5 @@ enable_error_code = [
 ]
 
 [[tool.mypy.overrides]]
-module = ["testcontainers.*"]
+module = ["testcontainers.*", "pywebpush.*", "py_vapid.*", "http_ece.*"]
 ignore_missing_imports = true

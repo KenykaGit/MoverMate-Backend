@@ -3,10 +3,10 @@ root_package = app
 include_external_packages = True
 
 [importlinter:contract:layers]
-name = Layers point inwards: composition root -> presentation -> infrastructure -> application -> domain
+name = Layers point inwards: composition roots -> presentation -> infrastructure -> application -> domain
 type = layers
 layers =
-    app.main
+    app.main | app.worker
     app.ioc
     app.config
     app.presentation
@@ -35,6 +35,12 @@ forbidden_modules =
     prometheus_client
     dishka
     uvicorn
+    aiohttp
+    pywebpush
+    py_vapid
+    cryptography
+    taskiq
+    taskiq_redis
 
 [importlinter:contract:domain_modules]
 name = Domain modules do not know each other (shared kernel: app.domain.common)
@@ -56,6 +62,7 @@ modules =
     app.application.auth
     app.application.health
     app.application.projects
+    app.application.notifications
 ignore_imports =
     app.application.auth.** -> app.application.users.**
 

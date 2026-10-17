@@ -3,18 +3,21 @@
 The published OpenAPI schema is checked in tests/unit/presentation/test_openapi.py."""
 
 from collections.abc import Callable
+from datetime import UTC, datetime, timedelta
+from typing import Any
 
 import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 from pydantic import SecretStr
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 import app.main
-from app.config import DatabaseSettings, RateLimitSettings, Settings
+from app.config import DatabaseSettings, RateLimitSettings, Settings, WorkerSettings
 from tests.conftest import LogEvents
 from tests.integration.conftest import ClientFactory
 from tests.integration.helpers import API, PASSWORD, register, signed_up
+from tests.integration.migrations.rows import insert_notification, insert_project
 from tests.routes import ECHO_PATH, ITEM_PATH, add_test_routes
 
 
@@ -31,7 +34,7 @@ async def test_ready(client: AsyncClient) -> None:
     assert response.json() == {
         "status": "ok",
         "version": "test-version",
-        "checks": {"postgres": "ok", "redis": "ok"},
+        "checks": {"postgres": "ok", "redis": "ok", "notifications": "ok"},
     }
 
 
@@ -44,7 +47,73 @@ async def test_ready_without_postgres_takes_the_instance_out(
 
     assert response.status_code == 503
     assert response.json()["status"] == "unavailable"
-    assert response.json()["checks"] == {"postgres": "unavailable", "redis": "ok"}
+    assert response.json()["checks"] == {
+        "postgres": "unavailable",
+        "redis": "ok",
+        "notifications": "degraded",  # its query needs Postgres too
+    }
+
+
+async def pending_notification(engine: AsyncEngine, **overrides: Any) -> None:
+    async with engine.begin() as connection:
+        project_id = await insert_project(connection)
+        await insert_notification(connection, project_id, **overrides)
+
+
+async def test_ready_is_degraded_while_notifications_wait_too_long(
+    client: AsyncClient, engine: AsyncEngine, log_events: LogEvents
+) -> None:
+    """The worker is down or overloaded: visible, but the api keeps serving."""
+    overdue = datetime.now(UTC) - timedelta(minutes=10)  # the limit is 5 minutes
+    await pending_notification(engine, scheduled_at=overdue)
+
+    response = await client.get("/health/ready")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "degraded"
+    assert response.json()["checks"] == {
+        "postgres": "ok",
+        "redis": "ok",
+        "notifications": "degraded",
+    }
+    [failure] = [e for e in log_events() if e["event"] == "readiness_check_failed"]
+    assert failure["dependency"] == "notifications"
+
+
+@pytest.mark.parametrize(
+    "notification",
+    [
+        {"scheduled_at": timedelta(hours=1)},  # not due yet
+        {"scheduled_at": -timedelta(minutes=1)},  # due, within the limit
+        {"scheduled_at": -timedelta(days=1), "status": "SENT"},  # old, but done
+        {"scheduled_at": -timedelta(days=1), "status": "CANCELLED"},
+    ],
+    ids=["future", "recent", "sent", "cancelled"],
+)
+async def test_ready_ignores_notifications_that_do_not_lag(
+    client: AsyncClient, engine: AsyncEngine, notification: dict[str, Any]
+) -> None:
+    scheduled_at = datetime.now(UTC) + notification.pop("scheduled_at")
+    await pending_notification(engine, scheduled_at=scheduled_at, **notification)
+
+    response = await client.get("/health/ready")
+
+    assert response.json()["status"] == "ok"
+    assert response.json()["checks"]["notifications"] == "ok"
+
+
+async def test_notification_lag_limit_is_configurable(
+    client_factory: ClientFactory, engine: AsyncEngine
+) -> None:
+    await pending_notification(engine, scheduled_at=datetime.now(UTC) - timedelta(seconds=90))
+
+    async with client_factory(worker=WorkerSettings(max_lag_seconds=60)) as strict:
+        tight = await strict.get("/health/ready")
+    async with client_factory(worker=WorkerSettings(max_lag_seconds=120)) as relaxed:
+        loose = await relaxed.get("/health/ready")
+
+    assert tight.json()["checks"]["notifications"] == "degraded"
+    assert loose.json()["checks"]["notifications"] == "ok"
 
 
 async def test_metrics_use_route_templates(client_factory: ClientFactory) -> None:

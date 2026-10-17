@@ -9,6 +9,13 @@ client ──HTTPS──▶ nginx :443 ──▶ api (uvicorn, FastAPI) ──�
                   │                                        (Redis API)   rate limit (fail-open)
                   ├─ X-Request-ID, X-Forwarded-For = $remote_addr, JSON 503 при отказе api
                   └─ сертификат ◀── certbot (Let's Encrypt, webroot через :80, продление)
+
+scheduler (taskiq scheduler) ──▶ Valkey: список taskiq:notifications   сигнал «пора» каждые 15 с
+                                       │
+worker (taskiq worker) ◀───────────────┘
+  │  без портов   ──▶ PostgreSQL   созревшие notifications, FOR UPDATE SKIP LOCKED
+  └──HTTPS, исходящий (Web Push, VAPID)──▶ push-сервисы браузеров ──▶ service worker клиента
+api, worker ── общий том vapid: ключ VAPID (api отдаёт публичную часть, worker подписывает)
 ```
 
 - **nginx** — единственная публичная точка входа ([ADR 0006](adr/0006-nginx-edge-and-rate-limiting.md)).
@@ -18,21 +25,31 @@ client ──HTTPS──▶ nginx :443 ──▶ api (uvicorn, FastAPI) ──�
 - **certbot** выпускает и продлевает сертификат Let's Encrypt для `DOMAIN` и кладёт его в
   том, который читает nginx ([ADR 0009](adr/0009-tls-letsencrypt-certbot.md)). Сервис нужен
   только в проде.
-- **PostgreSQL** хранит все данные, включая сессии (`refresh_tokens`). Инварианты
-  продублированы ограничениями в самой БД.
+- **scheduler** и **worker** — тот же образ, команды taskiq
+  ([ADR 0011](adr/0011-notification-worker.md)). `scheduler` каждые 15 с кладёт в Redis сигнал
+  `deliver_due_notifications`; он должен быть один. `worker` по сигналу отправляет созревшие
+  уведомления из таблицы `notifications` через Web Push. Очередь и источник истины — таблица,
+  сообщение в Redis лишь будит воркер. Портов сервисы не публикуют; `worker` наружу ходит только
+  исходящим HTTPS к push-сервисам браузеров (Google, Mozilla, Apple). Ключ VAPID лежит в томе
+  `vapid`, общем с api.
+- **PostgreSQL** хранит все данные, включая сессии (`refresh_tokens`) и очередь уведомлений.
+  Инварианты продублированы ограничениями в самой БД.
 - **Redis** (сервер — Valkey, BSD-форк Redis с тем же протоколом) хранит только то, что
-  можно потерять. При его отказе сервис продолжает работать в деградированном режиме
-  ([ADR 0003](adr/0003-postgres-and-redis-fail-open.md)). В коде и настройках он везде
+  можно потерять: ключи идемпотентности, счётчики rate limit и сигналы воркеру. При его отказе
+  API продолжает работать в деградированном режиме
+  ([ADR 0003](adr/0003-postgres-and-redis-fail-open.md)), а уведомления задерживаются до его
+  возвращения. В коде и настройках он везде
   называется Redis: это имя протокола и клиента `redis-py`.
 
 ## Слои
 
 ```text
-           app.main ─ app.ioc ─ app.config          точка сборки (composition root)
+              app.main | app.worker                  точки сборки (composition roots):
+              app.ioc ─ app.config                   HTTP-сервис и воркер уведомлений
                         │
                  app.presentation                    FastAPI: роуты, схемы, ошибки, middleware
                         │
-                app.infrastructure                   SQLAlchemy, Redis, argon2/JWT, Prometheus
+                app.infrastructure                   SQLAlchemy, Redis, argon2/JWT, Web Push, Prometheus
                         │
                  app.application                     use cases, порты, DTO; только stdlib
                         │
@@ -45,10 +62,11 @@ client ──HTTPS──▶ nginx :443 ──▶ api (uvicorn, FastAPI) ──�
 | Слой | Что здесь | Чего здесь нет |
 |---|---|---|
 | `domain/` | `User`, `RefreshToken` (с `TokenFamilyId`); агрегаты переезда `Project`, `Room`, `Box`, `Item`, `Task`, `Notification`, `PushSubscription`, `AuditEntry`; Value Objects; `DomainError` | любые сторонние пакеты, ввод-вывод, время «сейчас» |
-| `application/` | use cases (`RegisterUser`, `Login`, `RefreshTokens`, `CreateProject`…), сервисы (`CredentialsVerifier`, `TokenPairIssuer`, `IdempotentExecutor`, `MovingReminderScheduler`), порты в `interfaces/`, DTO, `exceptions.py` | FastAPI, SQLAlchemy, Redis, pydantic, structlog; логирование только через stdlib `logging` |
-| `infrastructure/` | ORM-модели, мапперы, репозитории, UoW, адаптеры Redis, argon2/JWT, метрики, настройка логов | бизнес-правила, HTTP |
+| `application/` | use cases (`RegisterUser`, `Login`, `RefreshTokens`, `CreateProject`, `DeliverNextNotification`…), сервисы (`CredentialsVerifier`, `TokenPairIssuer`, `IdempotentExecutor`, `MovingReminderScheduler`), порты в `interfaces/`, DTO, `exceptions.py` | FastAPI, SQLAlchemy, Redis, pydantic, structlog; логирование только через stdlib `logging` |
+| `infrastructure/` | ORM-модели, мапперы, репозитории, UoW, адаптеры Redis, argon2/JWT, Web Push (pywebpush, ключи VAPID), брокер taskiq (`tasks/`), метрики, настройка логов | бизнес-правила, HTTP |
 | `presentation/` | роуты (`DishkaRoute`), pydantic-схемы (только форма запроса), контракт ошибок, `RequestContextMiddleware`, rate limit, `CurrentUser` | SQL, Redis, хэширование (только через порты) |
 | `ioc/` | провайдеры Dishka: какой адаптер реализует какой порт и в каком scope | логика |
+| `worker/` | точка сборки воркера: задача taskiq `deliver_due_notifications`, планировщик, `drain`, heartbeat; `entry.py` — цели для CLI `taskiq` | бизнес-правила (только вызов use case) |
 
 ### Домен
 
@@ -75,13 +93,15 @@ client ──HTTPS──▶ nginx :443 ──▶ api (uvicorn, FastAPI) ──�
   `IdempotentExecutor`, `MovingReminderScheduler`) и хелперы (`lookup.py`) только готовят
   изменения и никогда не коммитят. Это проверяет AST-тест.
 - Порты (`application/interfaces/`) — абстрактные классы: репозитории (пользователи, токены,
-  проекты, комнаты, уведомления, журнал), модель чтения `AbstractProjectReader`, хэшер,
-  токены, rate limiter, хранилище идемпотентности, health probe.
+  проекты, комнаты, уведомления, push-подписки, журнал), модели чтения `AbstractProjectReader`
+  и `AbstractNotificationContextReader`, хэшер, токены, rate limiter, хранилище
+  идемпотентности, отправка Web Push (`AbstractPushSender`), ключи VAPID (`AbstractPushKeys`),
+  health probe.
 - `application/common` — общие механизмы без бизнес-смысла: часы, UoW, пагинация
   (`PageRequest`/`Page`), идемпотентность (`IdempotentExecutor`) и `Patch`/`UNSET` для
   частичных обновлений. Идемпотентность использует `POST /projects`; пагинация ждёт длинных
   списков и проверена unit-тестами и тестовым маршрутом в интеграционных тестах.
-- Фичи `users`, `auth`, `health`, `projects` независимы. Исключение одно: `auth` может
+- Фичи `users`, `auth`, `health`, `projects`, `notifications` независимы. Исключение одно: `auth` может
   использовать `users` (`AuthenticateUser` вызывает `GetUser`).
 - **Проекты** ([ADR 0010](adr/0010-projects-api.md)). Изменяющий use case берёт проект с
   блокировкой строки (`get_by_id(for_update=True)`) через `get_member_project_or_raise`:
@@ -90,6 +110,9 @@ client ──HTTPS──▶ nginx :443 ──▶ api (uvicorn, FastAPI) ──�
   `AbstractProjectReader` (username владельца, `created_at`/`updated_at` из БД).
   Напоминания о переезде (`MovingReminderScheduler`) ставятся в outbox `notifications` в той
   же транзакции на 09:00 по `time_zone` проекта.
+- **Уведомления** ([ADR 0011](adr/0011-notification-worker.md)). Подписки браузеров ведут
+  `SubscribeToPush` (upsert по `endpoint`) и `UnsubscribeFromPush`. Отправку выполняет
+  `DeliverNextNotification`, его вызывает воркер, а не HTTP.
 
 ## Поток запроса
 
@@ -114,20 +137,39 @@ client ──HTTPS──▶ nginx :443 ──▶ api (uvicorn, FastAPI) ──�
    удаляется.
 8. Ошибки любого слоя превращаются в `{"error": {...}}` в `presentation/http/errors.py`.
 
+## Поток уведомления
+
+1. Use case изменения (например, `SetProjectReminders`) ставит строку `PENDING` в
+   `notifications` в своей транзакции.
+2. **`scheduler`** раз в `WORKER__INTERVAL_SECONDS` (15 с) кладёт сообщение
+   `deliver_due_notifications` в список Redis `taskiq:notifications` (`WORKER__QUEUE_NAME`).
+3. **`worker`** (`app.worker`) берёт сообщение и запускает `drain`: `Scope.REQUEST` на каждое
+   уведомление, до `WORKER__BATCH_SIZE` (100) за запуск. После успешного запуска обновляет
+   heartbeat-файл.
+4. **`DeliverNextNotification`**: `claim_next_due` (`FOR UPDATE SKIP LOCKED`) →
+   `compose_message` по текущим данным (`AbstractNotificationContextReader`; причины нет →
+   `CANCELLED`) → `AbstractPushSender.send` на каждую активную подписку получателя →
+   `mark_sent` / `mark_skipped` / `record_failure` → `uow.commit()` → лог `notification_processed`.
+5. **`WebPushSender`** шифрует payload (aes128gcm), подписывает запрос VAPID и отправляет его
+   push-сервису; 404/410 → подписка деактивируется, остальные ошибки → повтор с задержкой.
+
 ## Внедрение зависимостей (Dishka)
 
 | Провайдер | Scope | Что предоставляет |
 |---|---|---|
 | `ConfigProvider` | APP | `Settings` (из контекста) и его секции, `RefreshTokenSettings`, `HttpSettings`, `RateLimitPolicy` |
-| `DatabaseProvider` | APP / REQUEST | `AsyncEngine`, `async_sessionmaker`, `DatabaseHealthProbe` / `AsyncSession`, `AbstractUnitOfWork`, репозитории, `AbstractProjectReader` |
+| `DatabaseProvider` | APP / REQUEST | `AsyncEngine`, `async_sessionmaker`, `DatabaseHealthProbe`, `NotificationLagProbe` / `AsyncSession`, `AbstractUnitOfWork`, репозитории, `AbstractProjectReader`, `AbstractNotificationContextReader` |
 | `RedisProvider` | APP | `Redis` (пул соединений), `AbstractIdempotencyStore`, `AbstractRateLimiter`, `RedisHealthProbe` |
 | `SecurityProvider` | APP | `AbstractPasswordHasher` (argon2id), `AbstractAccessTokenService` (JWT), `AbstractRefreshTokenGenerator` |
+| `PushProvider` | APP | `VapidKeyStore` (`AbstractPushKeys`), `AbstractPushSender` (`WebPushSender` с сессией aiohttp) |
 | `UseCaseProvider` | REQUEST | все use cases и сервисы приложения |
 | `ObservabilityProvider` | APP | `ReadinessProbes`, `CheckReadiness` |
 
 Граф проверяется при создании контейнера (`create_container`). Неразрешимая зависимость
-обнаруживается при старте, а не на первом запросе. Ресурсы с `yield` (engine, Redis)
-закрываются при `container.close()` в lifespan приложения.
+обнаруживается при старте, а не на первом запросе. Ресурсы с `yield` (engine, Redis, HTTP-сессия
+`WebPushSender`) закрываются при `container.close()`: в lifespan приложения и на `WORKER_SHUTDOWN`
+воркера. Воркер собирает тот же контейнер на `WORKER_STARTUP` (планировщик — нет); ключ VAPID и HTTP-сессия создаются при первом
+использовании, поэтому в api отправитель ничего не открывает.
 
 Зачем отдельный пакет `ioc/`, а не `Depends` в роутерах, объясняет
 [ADR 0002](adr/0002-dishka-ioc.md).
@@ -166,7 +208,8 @@ client ──HTTPS──▶ nginx :443 ──▶ api (uvicorn, FastAPI) ──�
 | Коробка | `PACKING → PACKED → LOADED → DELIVERED → UNPACKED` | шаг вперёд или назад (`BOX_TRANSITIONS`); повтор текущего статуса — no-op; откат пишется в журнал отдельно | `Box.change_status`; в БД — CHECK значений и триггер `ck_boxes_status_transition`; гонки — условный `UPDATE … WHERE status = :expected` в репозитории |
 | Вещь | `TO_PACK`, `IN_BOX`, `TAKEN_OUT`, `LOST` | матрица `ITEM_TRANSITIONS` (db-design, 5.2); `box_id` только у `IN_BOX` | методы `Item`; в БД — CHECK `(state = 'IN_BOX') = (box_id IS NOT NULL)` и триггер `ck_items_state_transition` |
 | Задача | `open`, `done` (`done_at`) | `complete` / `reopen` идемпотентны; очистка срока удаляет напоминания | методы `Task`; в БД — CHECK `is_done = (done_at IS NOT NULL)` |
-| Уведомление | `PENDING` → `SENT`, `FAILED`, `CANCELLED`, `SKIPPED` | только из `PENDING`, один раз; до 5 попыток с экспоненциальной задержкой | методы `Notification`; в БД — CHECK по типу, триггер `ck_notifications_status_transition` и частичные UNIQUE |
+| Уведомление | `PENDING` → `SENT`, `FAILED`, `CANCELLED`, `SKIPPED` | только из `PENDING`, один раз. Воркер: причины нет → `CANCELLED`; доставлено → `SENT`; некуда доставить → `SKIPPED`; ошибка → повтор через 1, 2, 4, 8 мин, после 5-й попытки `FAILED` | методы `Notification` (`cancel`, `mark_sent`, `mark_skipped`, `record_failure`); в БД — CHECK по типу, триггер `ck_notifications_status_transition` и частичные UNIQUE; строка заблокирована на время отправки (`SKIP LOCKED`) |
+| Push-подписка | `active`, `inactive` (`is_active`) | `PUT /push/subscriptions` → `active` (новый `endpoint` создаётся, известный переходит к вызывающему и оживает); `DELETE` владельцем, ответ 404/410 или непригодные ключи → `inactive` | `PushSubscription.subscribe` / `renew` / `deactivate`; UNIQUE `endpoint`, upsert `ON CONFLICT (endpoint)` при гонке |
 | Refresh-токен | `active`, `revoked`, `expired` | вход → `active` в новой семье; ротация: предъявленный `active → revoked` и новый `active` в той же семье; повтор или logout: вся семья → `revoked`; смена пароля или удаление: все токены пользователя → `revoked`; `expired` наступает по времени | `RefreshToken.revoke` (первое время отзыва сохраняется); атомарный `UPDATE … WHERE revoked_at IS NULL RETURNING id`; UNIQUE и CHECK длины `token_hash` |
 
 Переходы выполняются только методами сущностей и атомарными операциями репозиториев.
@@ -206,9 +249,9 @@ logout(любой R из F) ─▶ revoke_family(F)
 
 [.importlinter](../.importlinter) задаёт пять контрактов:
 
-1. слои `main → ioc → config → presentation → infrastructure → application → domain`;
+1. слои `main | worker → ioc → config → presentation → infrastructure → application → domain`;
 2. `domain` и `application` не импортируют сторонние пакеты: fastapi, sqlalchemy, pydantic,
-   redis, structlog, prometheus_client, dishka…;
+   redis, structlog, prometheus_client, dishka, aiohttp, pywebpush, taskiq…;
 3. доменные модули независимы друг от друга;
 4. фичи application независимы, кроме `auth → users`;
 5. presentation не обращается к `infrastructure.db/redis/security` напрямую, только через порты.
@@ -218,7 +261,9 @@ import-linter выразить не может:
 
 - явные списки разрешённых импортов для каждого доменного модуля и фичи;
 - «дом» каждой технологии: `sqlalchemy` только в `infrastructure/db` и `ioc/db_provider.py`,
-  `redis` только в `infrastructure/redis`, и т.д.;
+  `redis` только в `infrastructure/redis` и `infrastructure/tasks`, `pywebpush`, `py_vapid`,
+  `aiohttp` и `cryptography` только в `infrastructure/push`, `taskiq` только в `worker/` и
+  `infrastructure/tasks`, `taskiq_redis` только в `infrastructure/tasks`, и т.д.;
 - ORM-модели только в `infrastructure/db/models/`;
 - у каждого use case есть `async def __call__`;
 - сервисы и хелперы не вызывают `commit`;
@@ -264,16 +309,31 @@ import-linter выразить не может:
   (например, формат username), уже сохранённая строка, которая им не отвечает, перестанет
   читаться. Ужесточение правил сопровождайте миграцией или скриптом, который находит и
   исправляет такие данные.
-- Уведомления только ставятся в очередь (`notifications`, `PENDING`): воркера отправки
-  (taskiq, [db-design.md](db-design.md#103-отправка)) пока нет, поэтому напоминания о
-  переезде никому не приходят.
 - Участие удалённого пользователя в проектах не удаляется, а скрывается из списка участников:
   так `RestoreUser` возвращает его. Пока аккаунт удалён, он по-прежнему занимает строку в
-  `project_collaborators` и получает ставящиеся в очередь напоминания.
-- Через API открыты только проекты и участники. Комнаты создаются лишь вместе с проектом
+  `project_collaborators`, и напоминания для него ставятся в очередь; воркер отменяет их в
+  момент отправки (`CANCELLED`). После восстановления аккаунта напоминания, срок которых
+  пришёлся на время удаления, не возвращаются.
+- Уведомления доставляются «хотя бы один раз»: если воркер упадёт после того, как push-сервис
+  принял сообщение, но до коммита, уведомление придёт повторно. Задержка — до 15 с после
+  `scheduled_at`.
+- Доставка зависит от Redis: пока он недоступен, сигналы воркеру не доходят и уведомления
+  задерживаются (не теряются, уйдут после возвращения Redis). Видно по `redis: degraded`, через
+  5 минут — `notifications: degraded`, и по unhealthy `worker`.
+- Планировщик должен быть один. Второй `scheduler` не ломает доставку, но удваивает пустые
+  запуски. Пока `scheduler` не работает, уведомления стоят (в проде его перезапускает
+  `restart: unless-stopped`). Своего healthcheck у него нет: остановку видно по heartbeat
+  `worker` и проверке `notifications`.
+- Один воркер отправляет последовательно: медленный push-сервис (таймаут 10 с на подписку)
+  задерживает очередь. Масштабирование — ещё экземпляры `worker` (`SKIP LOCKED`).
+- Ключ VAPID живёт в томе `vapid`. Потеря тома ломает все подписки браузеров (push-сервисы
+  отвечают 403); ротации ключа нет, кроме «новый ключ и повторная подписка клиентов».
+- У воркера нет `/metrics`: очередь видна по проверке `notifications` в `/health/ready`,
+  healthcheck контейнера и логам.
+- Через API открыты только проекты, участники и push-подписки. Комнаты создаются лишь вместе с проектом
   (`POST /projects`); эндпоинтов комнат, коробок, вещей и задач пока нет, хотя домен и
   таблицы для них готовы.
-- Явные `operationId` есть только у маршрутов проектов; у `auth` и `users` они сгенерированы
+- Явные `operationId` есть только у маршрутов проектов и push; у `auth` и `users` они сгенерированы
   FastAPI, и SDK фронтенда получит для них длинные имена функций.
 - Миграция [0002](../migrations/versions/0002_drop_user_email.py) удаляет колонку `users.email`
   за один релиз, без expand/contract: код предыдущего релиза пишет в неё и на новой схеме не

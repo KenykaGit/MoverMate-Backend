@@ -5,24 +5,39 @@
 | Сигнал | Где | Для чего |
 |---|---|---|
 | `GET /health/live` | процесс жив, зависимости не проверяются | перезапуск контейнера (Docker `HEALTHCHECK`) |
-| `GET /health/ready` | Postgres и Redis | снимать ли инстанс с трафика; `version` показывает задеплоенную версию |
+| `GET /health/ready` | Postgres, Redis, очередь уведомлений | снимать ли инстанс с трафика; `version` показывает задеплоенную версию |
 | `GET /metrics` | Prometheus, только изнутри сети (nginx отдаёт 404) | тренды и алерты |
 | логи api (stdout, JSON) | `docker compose logs api` | разбор конкретного запроса |
 | логи nginx (stdout, JSON) | `docker compose logs nginx` | что видел клиент, время апстрима |
 | логи certbot (прод) | `docker compose logs certbot` | выпуск и продление сертификата |
+| healthcheck и логи worker, логи scheduler | `docker compose ps worker scheduler`, `docker compose logs worker scheduler` | отправка уведомлений |
 
 ### `/health/ready`
 
 | `status` | HTTP | Значение |
 |---|---|---|
 | `ok` | 200 | всё работает |
-| `degraded` | 200 | Redis недоступен: идемпотентность и rate limit отключены, основной сценарий (включая логин) работает. Инстанс **не** снимается с трафика |
+| `degraded` | 200 | Redis недоступен (`checks.redis`): идемпотентность и rate limit отключены, основной сценарий (включая логин) работает. Или отстаёт очередь уведомлений (`checks.notifications`): воркер или планировщик остановлен, воркер не успевает, или Redis недоступен давно (сигналы воркеру не доходят). Инстанс **не** снимается с трафика |
 | `unavailable` | 503 | Postgres недоступен: сервис не может выполнить ни один сценарий |
 
 Каждая проверка ограничена таймаутом 2 секунды, проверки выполняются параллельно.
 Классификация зависимостей задаётся в `ObservabilityProvider`: Postgres — critical,
-Redis — auxiliary. Логика деградации находится в use case `CheckReadiness` и покрыта
+Redis и `notifications` — auxiliary. Логика деградации находится в use case `CheckReadiness` и покрыта
 unit-тестами.
+
+### Воркер уведомлений
+
+Доставку выполняют два процесса taskiq ([ADR 0011](adr/0011-notification-worker.md)):
+`scheduler` раз в 15 с кладёт сигнал в Redis, `worker` по сигналу отправляет созревшие
+уведомления. Запросов они не принимают, поэтому состояние видно тремя способами:
+
+| Сигнал | Когда срабатывает |
+|---|---|
+| `checks.notifications = degraded` в `/health/ready` api (`NotificationLagProbe`) | самое старое уведомление в `PENDING` просрочено больше чем на `WORKER__MAX_LAG_SECONDS` (300 с): воркер стоит или не справляется. Время берётся из БД, расхождение часов api на проверку не влияет |
+| контейнер `worker` в состоянии `unhealthy` | heartbeat-файл `/tmp/worker-heartbeat` не обновлялся дольше 60 с. Воркер обновляет его при старте и после каждого успешного запуска задачи (раз в 15 с). Устаревший heartbeat значит «доставки нет», причина — любая: стоит воркер, стоит `scheduler`, недоступен Redis (сигналы не доходят) или Postgres (запуск падает). У `scheduler` своего healthcheck нет |
+| события `notification_processed` | исход каждого уведомления (см. ниже) |
+
+Метрик Prometheus у воркера нет.
 
 ## Метрики
 
@@ -30,7 +45,7 @@ unit-тестами.
 |---|---|---|
 | `http_requests_total` | `method`, `route`, `status` | доля 5xx по маршрутам; всплеск 4xx — сломанный клиент или атака |
 | `http_request_duration_seconds` | `method`, `route` | p95/p99 латентности |
-| `redis_errors_total` | `op` (`rate_limit`, `idempotency_begin`…) | любой рост означает работу в деградированном режиме |
+| `redis_errors_total` | `op` (`rate_limit`, `idempotency_begin`…) | любой рост означает работу в деградированном режиме. `op="task_queue_pop"` считается в процессе воркера, у которого нет `/metrics`: там смотрите логи |
 | `rate_limited_total` | `scope=api\|auth` | клиенты упираются в лимит; рост `auth` — признак перебора паролей |
 
 `route` — шаблон пути (`/api/v1/projects/{project_id}`, а не сам id), поэтому кардинальность ограничена.
@@ -78,9 +93,32 @@ SQLAlchemy) проходят через один конвейер. Каждая 
 | `redis_unavailable` | warning | `op`, `error` | операция Redis не удалась, сработал fail-open |
 | `readiness_check_failed` | warning | `dependency`, `error` | зависимость не прошла проверку `/health/ready` |
 | `idempotency_record_corrupted` | warning | ключ | запись в Redis не читается (например, после смены формата) |
+| `push_subscribed` | info | `user_id`, `subscription_id`, `renewed`, `push_service` | браузер подписан; `renewed=true` — `endpoint` уже был известен (повтор, другой аккаунт или оживление); `push_service` — только хост push-сервиса |
+| `push_unsubscribed` | info | `user_id`, `subscription_id` | пользователь отписал свой браузер (чужой или неизвестный `endpoint` не пишется) |
+
+События воркера (`docker compose logs worker`, без `request_id`):
+
+| Событие | Уровень | Поля | Значение |
+|---|---|---|---|
+| `worker_started` | info | `version`, `interval` | воркер запущен (`WORKER_STARTUP`), контейнер зависимостей создан; `interval` — период планировщика в секундах |
+| `notifications_drained` | info | `count` | за запуск задачи обработано столько уведомлений (пустые запуски не пишутся) |
+| `notification_processed` | info / **warning** для `FAILED` | `notification_id`, `notification_type`, `project_id`, `user_id`, `outcome`, `attempts`, `delay_seconds` | исход уведомления: `SENT`, `SKIPPED` (нет подписок), `CANCELLED` (причина отпала), `RETRY` (все push-сервисы ответили ошибкой, повтор позже), `FAILED` (последняя попытка); `delay_seconds` — опоздание относительно `scheduled_at` |
+| `push_subscription_gone` | info | `subscription_id`, `user_id` | push-сервис ответил 404/410 или ключи непригодны: подписка отключена |
+| `redis_unavailable` | warning | `op=task_queue_pop`, `error` | воркер не смог прочитать очередь taskiq (Redis недоступен); повтор через 1 с, процесс не перезапускается. Уведомления ждут в Postgres |
+| **`worker_iteration_failed`** | **error** + traceback | — | запуск задачи упал (чаще всего недоступна БД); heartbeat не обновляется, следующий сигнал попробует снова |
+| `worker_stopped` | info | — | воркер остановлен (`WORKER_SHUTDOWN`), контейнер зависимостей закрыт |
+
+Собственные логи taskiq (логгеры `taskiq.*`, уровень INFO) идут через тот же structlog JSON:
+`--no-configure-logging` отключает формат taskiq, `app.worker.entry` настраивает логи при
+импорте. Полезные события: `Starting scheduler.` и `Sending task deliver_due_notifications with
+schedule_id deliver_due_notifications.` (каждые 15 с) в `docker compose logs scheduler`,
+`Listening started.` и `Executing task deliver_due_notifications with ID: …` в логах `worker`.
+Если `Sending task` идёт, а `Executing task` нет — сигналы не доходят: смотрите Redis и
+`worker`.
 
 Пароли, токены и хэши никогда не логируются. DTO с секретами помечены `field(repr=False)`,
-в pydantic-схемах используется `SecretStr`.
+в pydantic-схемах используется `SecretStr`. `endpoint` push-подписки тоже секрет (кто его
+знает, может слать push в браузер): события содержат только хост push-сервиса.
 
 ### Логи nginx
 
@@ -128,10 +166,27 @@ SQLAlchemy) проходят через один конвейер. Каждая 
 6. **Пользователь не видит проект или не получил напоминание.** 404 `project_not_found`
    одинаков для «нет проекта» и «не участник»: ищите по `project_id` события
    `collaborator_removed`/`project_left` и `project_deleted`. Сдвиг напоминаний после смены
-   даты или пояса виден по `project_rescheduled`. Уведомления пока только ставятся в очередь
-   (таблица `notifications`, статус `PENDING`): воркера отправки нет.
+   даты или пояса виден по `project_rescheduled`. Дальше — п. 9.
 7. **Подозрение на рассинхрон версий.** `version` в `/health/ready` должна совпадать с
    коммитом в GitLab.
 8. **Клиенты жалуются на сертификат.** Проверьте издателя и срок командой выше, затем
    `docker compose logs certbot`: `issuance failed` чаще всего означает, что DNS домена не
    указывает на VM или `:80` закрыт снаружи.
+9. **Уведомление не пришло.**
+   1. `/health/ready`: `checks.notifications = degraded` — очередь стоит. `docker compose ps
+      worker scheduler`: `worker` в `unhealthy` или не запущен, `scheduler` не запущен.
+      `checks.redis = degraded` — сигналы воркеру не доходят, уведомления уйдут после
+      возвращения Redis. Иначе причина — в `docker compose logs worker`
+      (`worker_iteration_failed`) и `docker compose logs scheduler`.
+   2. Воркер жив — найдите уведомление: `docker compose logs worker | grep <notification_id>`
+      или по `user_id`, затем `outcome`.
+   3. Статус в таблице: `SELECT status, attempts, last_error, scheduled_at, sent_at FROM
+      notifications WHERE user_id = '…' ORDER BY scheduled_at DESC`. `PENDING` с будущим
+      `scheduled_at` — ещё не время или ждёт повтора; `SKIPPED` — у пользователя нет активной
+      подписки (браузер не вызвал `PUT /push/subscriptions` или подписка отпала,
+      `push_subscription_gone`); `CANCELLED` — причина отпала (задача выполнена, коробка
+      собрана, пользователь вышел из проекта); `FAILED` — смотрите `last_error`.
+   4. `SENT`, но пользователь ничего не видел: push-сервис принял сообщение, дальше отвечают
+      браузер и ОС (разрешения, режим «Не беспокоить», на iOS — PWA на домашнем экране).
+   5. 403 от всех push-сервисов в `last_error` — сменился ключ VAPID (потерян том `vapid`):
+      клиентам нужно подписаться заново.

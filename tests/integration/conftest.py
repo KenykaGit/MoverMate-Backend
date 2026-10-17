@@ -11,6 +11,7 @@ from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from pathlib import Path
 from typing import Any
 
+import aiohttp
 import pytest
 from alembic import command
 from alembic.config import Config as AlembicConfig
@@ -33,6 +34,7 @@ from app.config import (
     AuthSettings,
     DatabaseSettings,
     Environment,
+    PushSettings,
     RateLimitSettings,
     RedisSettings,
     Settings,
@@ -41,6 +43,7 @@ from app.infrastructure.db.models import Base
 from app.ioc.config_provider import http_settings_from
 from app.ioc.container import create_container
 from app.presentation.http.app import create_app
+from tests.integration.push_service import FakePushService
 
 PROJECT_ROOT = Path(__file__).parents[2]
 # The same images as docker-compose.yml and CI.
@@ -134,8 +137,16 @@ async def redis(redis_url: str) -> AsyncIterator[Redis]:
     await client.aclose()
 
 
+@pytest.fixture(scope="session")
+def vapid_key_file(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """Where the app under test keeps its VAPID key: never in the working tree."""
+    return tmp_path_factory.mktemp("vapid") / "private_key.pem"
+
+
 @pytest.fixture
-def make_settings(migrated_postgres_url: str, redis_url: str) -> Callable[..., Settings]:
+def make_settings(
+    migrated_postgres_url: str, redis_url: str, vapid_key_file: Path
+) -> Callable[..., Settings]:
     """Settings of the app under test; keyword arguments replace whole sections."""
 
     def factory(**overrides: Any) -> Settings:
@@ -154,6 +165,7 @@ def make_settings(migrated_postgres_url: str, redis_url: str) -> Callable[..., S
             ),
             # Enabled explicitly by the rate limit tests.
             "rate_limit": RateLimitSettings(api_per_minute=0, auth_per_minute=0),
+            "push": PushSettings(vapid_key_file=vapid_key_file),
         }
         # Never read a developer's .env or environment: tests must be reproducible.
         return Settings.model_construct(**(sections | overrides))
@@ -194,3 +206,20 @@ def client_factory(
 async def client(client_factory: ClientFactory) -> AsyncIterator[AsyncClient]:
     async with client_factory() as client:
         yield client
+
+
+@pytest.fixture
+async def push_service(tmp_path: Path) -> AsyncIterator[FakePushService]:
+    """A Web Push service over HTTPS on localhost; see tests/integration/push_service.py."""
+    service = FakePushService(tmp_path)
+    await service.start()
+    yield service
+    await service.stop()
+
+
+@pytest.fixture
+async def push_session(push_service: FakePushService) -> AsyncIterator[aiohttp.ClientSession]:
+    """The HTTP session a WebPushSender needs to reach `push_service`."""
+    session = push_service.client_session()
+    yield session
+    await session.close()

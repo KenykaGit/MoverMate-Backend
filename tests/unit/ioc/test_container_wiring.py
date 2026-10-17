@@ -10,6 +10,7 @@ import inspect
 import pkgutil
 from collections.abc import AsyncIterator
 from datetime import timedelta
+from pathlib import Path
 
 import jwt
 import pytest
@@ -28,6 +29,7 @@ from app.application.health.check_readiness import CheckReadiness
 from app.application.health.dto import ReadinessProbes
 from app.application.interfaces.idempotency import AbstractIdempotencyStore
 from app.application.interfaces.password_hasher import AbstractPasswordHasher
+from app.application.interfaces.push_sender import AbstractPushSender
 from app.application.interfaces.rate_limiter import AbstractRateLimiter
 from app.application.interfaces.refresh_token_repository import AbstractRefreshTokenRepository
 from app.application.interfaces.tokens import (
@@ -37,12 +39,13 @@ from app.application.interfaces.tokens import (
 from app.application.interfaces.user_repository import AbstractUserRepository
 from app.application.projects.services import MovingReminderScheduler
 from app.application.users.register_user import RegisterUser
-from app.config import AuthSettings, RateLimitSettings, Settings
+from app.config import AuthSettings, PushSettings, RateLimitSettings, Settings
 from app.domain.common.ids import UserId, new_id
 from app.domain.users.value_objects import RawPassword
 from app.infrastructure.db.repositories.refresh_token import SqlAlchemyRefreshTokenRepository
 from app.infrastructure.db.repositories.user import SqlAlchemyUserRepository
 from app.infrastructure.db.uow import SqlAlchemyUnitOfWork
+from app.infrastructure.push.sender import WebPushSender
 from app.ioc.config_provider import ConfigProvider
 from app.ioc.container import create_container
 from app.ioc.db_provider import DatabaseProvider
@@ -71,6 +74,7 @@ def settings() -> Settings:
             argon2_parallelism=1,
         ),
         rate_limit=RateLimitSettings(api_per_minute=42, auth_per_minute=7),
+        push=PushSettings(vapid_key_file=Path("/nonexistent/wiring-test/vapid.pem")),
     )
 
 
@@ -228,9 +232,24 @@ class TestSettingsReachTheAdapters:
             title="wiring-test", version="1.2.3", cors_origins=("https://app.example.com",)
         )
 
-    async def test_postgres_is_critical_and_redis_auxiliary(
+    async def test_postgres_is_critical_redis_and_the_notification_queue_auxiliary(
         self, container: AsyncContainer
     ) -> None:
         probes = await container.get(ReadinessProbes)
 
-        assert (set(probes.critical), set(probes.auxiliary)) == ({"postgres"}, {"redis"})
+        assert (set(probes.critical), set(probes.auxiliary)) == (
+            {"postgres"},
+            {"redis", "notifications"},
+        )
+
+    async def test_push_sender_has_no_side_effects_until_it_sends(
+        self, container: AsyncContainer, settings: Settings
+    ) -> None:
+        """The api resolves the same graph: building the sender must not create
+        the VAPID key file nor open connections."""
+        sender = await container.get(AbstractPushSender)
+
+        assert isinstance(sender, WebPushSender)
+        assert sender._vapid is None
+        assert sender._session is None
+        assert not settings.push.vapid_key_file.exists()

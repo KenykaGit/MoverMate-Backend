@@ -19,6 +19,11 @@ type Schema = dict[str, Any]
 # Every operation is classified: a new endpoint fails test_every_operation_is_classified
 # until someone decides whether it needs a user.
 # Generated SDKs name their functions after operationId: these must not change.
+PUSH_OPERATION_IDS = {
+    "GET /api/v1/push/vapid-public-key": "getVapidPublicKey",
+    "PUT /api/v1/push/subscriptions": "upsertPushSubscription",
+    "DELETE /api/v1/push/subscriptions": "deletePushSubscription",
+}
 PROJECT_OPERATION_IDS = {
     "GET /api/v1/projects": "listProjects",
     "POST /api/v1/projects": "createProject",
@@ -32,12 +37,15 @@ PROJECT_OPERATION_IDS = {
 }
 PROTECTED = {
     *PROJECT_OPERATION_IDS,
+    "PUT /api/v1/push/subscriptions",
+    "DELETE /api/v1/push/subscriptions",
     "GET /api/v1/users/me",
     "DELETE /api/v1/users/me",
     "PUT /api/v1/users/me/password",
     "PUT /api/v1/users/me/username",
 }
 PUBLIC = {
+    "GET /api/v1/push/vapid-public-key",
     "POST /api/v1/auth/register",
     "POST /api/v1/auth/login",
     "POST /api/v1/auth/refresh",
@@ -99,6 +107,7 @@ def test_bearer_scheme_tells_where_tokens_come_from(schema: Schema) -> None:
 # Parameters a client really sends, besides the placeholders of the path itself.
 DECLARED_PARAMETERS = {
     "POST /api/v1/projects": {("header", "idempotency-key")},
+    "DELETE /api/v1/push/subscriptions": {("query", "endpoint")},
 }
 
 
@@ -120,11 +129,12 @@ def test_injected_dependencies_do_not_leak_into_parameters(schema: Schema) -> No
     assert leaked == {}
 
 
-def test_project_operations_have_stable_ids(schema: Schema) -> None:
-    found = {name: operations(schema)[name].get("operationId") for name in PROJECT_OPERATION_IDS}
+def test_operations_have_stable_ids(schema: Schema) -> None:
+    expected = PROJECT_OPERATION_IDS | PUSH_OPERATION_IDS
+    found = {name: operations(schema)[name].get("operationId") for name in expected}
     every_id = [op["operationId"] for op in operations(schema).values()]
 
-    assert found == PROJECT_OPERATION_IDS
+    assert found == expected
     assert len(every_id) == len(set(every_id))
 
 

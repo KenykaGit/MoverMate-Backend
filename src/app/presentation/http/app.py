@@ -15,7 +15,7 @@ from app.presentation.http.errors import (
 from app.presentation.http.idempotency import REPLAY_HEADER
 from app.presentation.http.middleware import RequestContextMiddleware
 from app.presentation.http.rate_limit import api_rate_limit
-from app.presentation.http.routes import auth, health, metrics, projects, users
+from app.presentation.http.routes import auth, health, metrics, projects, push, users
 from app.presentation.http.settings import HttpSettings
 
 logger = structlog.get_logger(__name__)
@@ -58,7 +58,7 @@ def create_app(container: AsyncContainer, settings: HttpSettings) -> FastAPI:
     app.include_router(metrics.router)
 
     api_v1 = APIRouter(dependencies=[Depends(api_rate_limit)], responses=ERROR_RESPONSES)
-    for router in (auth.router, users.router, projects.router):
+    for router in (auth.router, users.router, projects.router, push.router):
         api_v1.include_router(router)
     app.include_router(api_v1, prefix=API_PREFIX)
     return app

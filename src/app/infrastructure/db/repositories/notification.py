@@ -1,6 +1,7 @@
 from collections.abc import Iterable
+from datetime import datetime
 
-from sqlalchemy import ColumnElement, update
+from sqlalchemy import ColumnElement, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.application.interfaces.notification_repository import AbstractNotificationRepository
@@ -23,6 +24,22 @@ class SqlAlchemyNotificationRepository(AbstractNotificationRepository):
 
     async def add(self, notification: Notification) -> None:
         self._session.add(NotificationMapper.to_model(notification))
+
+    async def claim_next_due(self, now: datetime) -> Notification | None:
+        # SKIP LOCKED: a row another worker is sending right now is passed over,
+        # so parallel workers neither wait for each other nor send it twice.
+        model = await self._session.scalar(
+            select(_N)
+            .where(_N.status == NotificationStatus.PENDING.value, _N.scheduled_at <= now)
+            .order_by(_N.scheduled_at, _N.id)
+            .limit(1)
+            .with_for_update(skip_locked=True)
+        )
+        return None if model is None else NotificationMapper.to_domain(model)
+
+    async def update(self, notification: Notification) -> None:
+        await self._session.merge(NotificationMapper.to_model(notification))
+        await self._session.flush()
 
     async def cancel_pending(self, project_id: ProjectId, *, user_id: UserId | None = None) -> int:
         conditions = [_N.project_id == project_id]

@@ -40,6 +40,7 @@ APPLICATION_FEATURE_DEPS = {
     "auth": frozenset({"users"}),
     "health": frozenset[str](),
     "projects": frozenset[str](),
+    "notifications": frozenset[str](),
 }
 APPLICATION_SHARED = ("app.application.common", "app.application.interfaces")
 APPLICATION_SHARED_MODULES = ("app.application.exceptions",)
@@ -50,14 +51,20 @@ NOT_USE_CASES = frozenset({"dto", "services", "lookup", "__init__"})
 TECHNOLOGY_HOMES: dict[str, tuple[str, ...]] = {
     "sqlalchemy": ("infrastructure/db/", "ioc/db_provider.py"),
     "asyncpg": ("infrastructure/db/",),
-    "redis": ("infrastructure/redis/", "ioc/redis_provider.py"),
+    "redis": ("infrastructure/redis/", "infrastructure/tasks/", "ioc/redis_provider.py"),
     "argon2": ("infrastructure/security/",),
     "jwt": ("infrastructure/security/",),
     "prometheus_client": ("infrastructure/metrics/",),
     "structlog": ("infrastructure/", "presentation/"),
     "fastapi": ("presentation/", "main.py"),
     "starlette": ("presentation/",),
-    "dishka": ("ioc/", "presentation/", "main.py"),
+    "dishka": ("ioc/", "presentation/", "main.py", "worker/"),
+    "taskiq": ("worker/", "infrastructure/tasks/"),
+    "taskiq_redis": ("infrastructure/tasks/",),
+    "aiohttp": ("infrastructure/push/",),
+    "pywebpush": ("infrastructure/push/",),
+    "py_vapid": ("infrastructure/push/",),
+    "cryptography": ("infrastructure/push/",),
     "pydantic": ("presentation/", "config.py"),
     "pydantic_settings": ("config.py",),
     "alembic": (),

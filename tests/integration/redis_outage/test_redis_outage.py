@@ -53,7 +53,7 @@ async def test_main_scenario_survives_a_redis_outage(
 
     assert ready.status_code == 200, "a Redis outage must not take the instance out"
     assert ready.json()["status"] == "degraded"
-    assert ready.json()["checks"] == {"postgres": "ok", "redis": "degraded"}
+    assert ready.json()["checks"] == {"postgres": "ok", "redis": "degraded", "notifications": "ok"}
     for op in ("rate_limit", "idempotency_begin"):
         assert f'redis_errors_total{{op="{op}"}}' in metrics
     failed_ops = {e["op"] for e in log_events() if e["event"] == "redis_unavailable"}

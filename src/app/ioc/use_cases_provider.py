@@ -6,6 +6,10 @@ from app.application.auth.logout import Logout
 from app.application.auth.refresh_tokens import RefreshTokens
 from app.application.auth.services import CredentialsVerifier, TokenPairIssuer
 from app.application.common.idempotency import IdempotentExecutor
+from app.application.notifications.deliver_next_notification import DeliverNextNotification
+from app.application.notifications.get_vapid_public_key import GetVapidPublicKey
+from app.application.notifications.subscribe_to_push import SubscribeToPush
+from app.application.notifications.unsubscribe_from_push import UnsubscribeFromPush
 from app.application.projects.add_collaborator import AddCollaborator
 from app.application.projects.create_project import CreateProject
 from app.application.projects.delete_project import DeleteProject
@@ -53,4 +57,7 @@ class UseCaseProvider(Provider):
         ListCollaborators,
         AddCollaborator,
         RemoveCollaborator,
+    )
+    notifications = provide_all(
+        DeliverNextNotification, GetVapidPublicKey, SubscribeToPush, UnsubscribeFromPush
     )

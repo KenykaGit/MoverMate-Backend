@@ -22,7 +22,9 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 # ---- runtime: no build tools, no uv, no sources outside the venv, non-root ----
 FROM python:3.14.8-slim-trixie AS runtime
 
-RUN groupadd --system app && useradd --system --gid app --no-create-home app
+RUN groupadd --system app && useradd --system --gid app --no-create-home app \
+    # The worker keeps its VAPID key here (a named volume copies this ownership).
+    && install -d -o app -g app -m 700 /var/lib/app/vapid
 
 WORKDIR /app
 COPY --from=builder --chown=app:app /app/.venv /app/.venv
@@ -42,7 +44,8 @@ EXPOSE 8000
 HEALTHCHECK --interval=10s --timeout=3s --start-period=10s --retries=3 \
     CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/live', timeout=2)"]
 
-# The same image runs migrations: `alembic upgrade head` (the compose `migrate` service).
+# The same image runs migrations: `alembic upgrade head` (the compose `migrate` service),
+# and the notification worker on taskiq (the compose `worker` and `scheduler` services).
 # FORWARDED_ALLOW_IPS: proxies trusted to set X-Forwarded-For (the rate limiter keys on
 # the real client IP). The access log is written by the app with request_id and route.
 CMD ["sh", "-c", "exec uvicorn app.main:create_app --factory --host 0.0.0.0 --port 8000 --proxy-headers --forwarded-allow-ips=\"${FORWARDED_ALLOW_IPS:-127.0.0.1}\" --no-access-log"]

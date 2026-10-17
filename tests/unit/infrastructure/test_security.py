@@ -106,7 +106,7 @@ class TestJwtAccessTokens:
         payload = jwt.decode(tokens.issue(USER_ID).token, options={"verify_signature": False})
 
         assert tokens.read_user_id(jwt.encode(payload, "x" * 40, algorithm="HS256")) is None
-        assert tokens.read_user_id(jwt.encode(payload, None, algorithm="none")) is None
+        assert tokens.read_user_id(jwt.encode(payload, "", algorithm="none")) is None
         assert tokens.read_user_id("garbage") is None
 
 

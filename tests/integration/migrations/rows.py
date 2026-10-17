@@ -148,3 +148,18 @@ async def insert_notification(
     } | overrides
     await insert(connection, "notifications", values)
     return str(values["id"])
+
+
+async def insert_push_subscription(
+    connection: AsyncConnection, user_id: str, **overrides: Any
+) -> str:
+    values = {
+        "id": row_id(),
+        "user_id": user_id,
+        "endpoint": f"https://push.example.com/{secrets.token_urlsafe(16)}",
+        "p256dh": "BAAA",
+        "auth": "AAAA",
+        "is_active": True,
+    } | overrides
+    await insert(connection, "push_subscriptions", values)
+    return str(values["id"])
