@@ -1,6 +1,6 @@
+import secrets
 from collections.abc import AsyncIterator
 from typing import Any
-from uuid import uuid4
 
 import pytest
 from alembic import command
@@ -14,32 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, create_async_en
 from app.infrastructure.db.errors import violated_constraint
 from app.infrastructure.db.models import Base
 from tests.integration.conftest import alembic_config
-
-
-@pytest.fixture
-async def connection(engine: AsyncEngine) -> AsyncIterator[AsyncConnection]:
-    """A connection whose transaction is rolled back: raw SQL leaves no trace."""
-    async with engine.connect() as connection:
-        transaction = await connection.begin()
-        yield connection
-        await transaction.rollback()
-
-
-async def insert_user(connection: AsyncConnection, **overrides: Any) -> str:
-    values = {
-        "id": str(uuid4()),
-        "username": uuid4().hex[:16],
-        "password_hash": "hash",
-        "is_active": True,
-    } | overrides
-    await connection.execute(
-        text(
-            "INSERT INTO users (id, username, password_hash, is_active) "
-            "VALUES (:id, :username, :password_hash, :is_active)"
-        ),
-        values,
-    )
-    return str(values["id"])
+from tests.integration.migrations.rows import insert_user, row_id
 
 
 def test_single_head() -> None:
@@ -99,6 +74,27 @@ async def test_partial_index_predicates_match_the_models(engine: AsyncEngine) ->
         == expected
         == {
             "uq_users_username_active": "is_active",
+            "uq_rooms_project_id_kind_name_active": "is_active",
+            "uq_boxes_project_id_number_active": "is_active",
+            "ix_boxes_project_id_status_active": "is_active",
+            "ix_boxes_project_id_destination_room_id_active": "is_active",
+            "ix_items_name_fts": "is_active",
+            "ix_items_box_id": "(box_id IS NOT NULL)",
+            "ix_items_project_id_state_priority_active": "is_active",
+            "ix_items_project_id_source_room_id_in_box": (
+                "(is_active AND ((state)::text = 'IN_BOX'::text))"
+            ),
+            "ix_tasks_project_id_due_at_active": "is_active",
+            "ix_notifications_scheduled_at_pending": "((status)::text = 'PENDING'::text)",
+            "ix_notifications_project_id_user_id_pending": "((status)::text = 'PENDING'::text)",
+            "uq_notifications_task_reminder_pending": (
+                "(((type)::text = 'TASK_REMINDER'::text) AND ((status)::text = 'PENDING'::text))"
+            ),
+            "uq_notifications_box_contents_pending": (
+                "(((type)::text = 'BOX_CONTENTS_REMINDER'::text)"
+                " AND ((status)::text = 'PENDING'::text))"
+            ),
+            "ix_push_subscriptions_user_id_active": "is_active",
         }
     )
 
@@ -143,7 +139,7 @@ async def test_only_sha256_hashes_of_refresh_tokens_are_stored(
                     "INSERT INTO refresh_tokens (id, user_id, family_id, token_hash, expires_at) "
                     "VALUES (:id, :user_id, :family_id, 'a-raw-token', now())"
                 ),
-                {"id": str(uuid4()), "user_id": user_id, "family_id": str(uuid4())},
+                {"id": row_id(), "user_id": user_id, "family_id": row_id()},
             )
 
     assert violated_constraint(exc_info.value) == "ck_refresh_tokens_token_hash_sha256"
@@ -152,7 +148,7 @@ async def test_only_sha256_hashes_of_refresh_tokens_are_stored(
 @pytest.fixture
 async def scratch_database_url(engine: AsyncEngine) -> AsyncIterator[str]:
     """An empty database next to the test one: the roundtrip drops everything."""
-    name = f"migrations_{uuid4().hex[:12]}"
+    name = f"migrations_{secrets.token_hex(6)}"
     admin = engine.execution_options(isolation_level="AUTOCOMMIT")
     async with admin.connect() as connection:
         await connection.execute(text(f'CREATE DATABASE "{name}"'))

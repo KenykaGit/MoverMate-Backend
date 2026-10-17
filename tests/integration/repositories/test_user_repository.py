@@ -1,6 +1,8 @@
 import asyncio
+from datetime import datetime
 
 import pytest
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -11,6 +13,7 @@ from app.application.exceptions import (
 from app.domain.common.ids import UserId
 from app.domain.users.entity import User
 from app.domain.users.value_objects import PasswordHash, Username
+from app.infrastructure.db.models.user import UserModel
 from app.infrastructure.db.repositories.user import SqlAlchemyUserRepository
 from tests.factories import make_user, user_state
 
@@ -29,6 +32,17 @@ async def load(session_maker: SessionMaker, user_id: UserId) -> User | None:
     """What is actually in the database: read in a fresh session."""
     async with session_maker() as session:
         return await SqlAlchemyUserRepository(session).get_by_id(user_id, include_deleted=True)
+
+
+async def timestamps(session_maker: SessionMaker, user_id: UserId) -> tuple[datetime, datetime]:
+    """Bookkeeping columns the domain does not carry."""
+    async with session_maker() as session:
+        row = (
+            await session.execute(
+                select(UserModel.created_at, UserModel.updated_at).where(UserModel.id == user_id)
+            )
+        ).one()
+        return row.created_at, row.updated_at
 
 
 class TestAdd:
@@ -194,6 +208,20 @@ class TestUpdate:
         reloaded = await load(session_maker, user.id)
         assert reloaded is not None
         assert user_state(reloaded) == user_state(changed)
+
+    async def test_bumps_updated_at_but_keeps_created_at(self, session_maker: SessionMaker) -> None:
+        user = make_user()
+        await save(session_maker, user)
+        before = await timestamps(session_maker, user.id)
+
+        async with session_maker() as session:
+            user.change_password(PasswordHash("new-hash"))
+            await SqlAlchemyUserRepository(session).update(user)
+            await session.commit()
+
+        created_at, updated_at = await timestamps(session_maker, user.id)
+        assert created_at == before[0] == before[1]
+        assert updated_at > before[1]
 
     async def test_rejects_a_missing_user_instead_of_inserting_it(
         self, session_maker: SessionMaker

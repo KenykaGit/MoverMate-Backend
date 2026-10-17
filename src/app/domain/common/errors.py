@@ -5,3 +5,7 @@ class DomainError(Exception):
     subclass to a stable error code; an unmapped one is reported as
     `invalid_value`.
     """
+
+
+class InvalidReminderOffsetError(DomainError):
+    """The reminder offset is out of the allowed range of hours."""

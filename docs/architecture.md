@@ -44,7 +44,7 @@ client ──HTTPS──▶ nginx :443 ──▶ api (uvicorn, FastAPI) ──�
 
 | Слой | Что здесь | Чего здесь нет |
 |---|---|---|
-| `domain/` | `User`, `RefreshToken` (с `TokenFamilyId`); Value Objects `Username`, `RawPassword`, `PasswordHash`; `DomainError` | любые сторонние пакеты, ввод-вывод, время «сейчас» |
+| `domain/` | `User`, `RefreshToken` (с `TokenFamilyId`); агрегаты переезда `Project`, `Room`, `Box`, `Item`, `Task`, `Notification`, `PushSubscription`, `AuditEntry`; Value Objects; `DomainError` | любые сторонние пакеты, ввод-вывод, время «сейчас» |
 | `application/` | use cases (`RegisterUser`, `Login`, `RefreshTokens`…), сервисы (`CredentialsVerifier`, `TokenPairIssuer`, `IdempotentExecutor`), порты в `interfaces/`, DTO, `exceptions.py` | FastAPI, SQLAlchemy, Redis, pydantic, structlog; логирование только через stdlib `logging` |
 | `infrastructure/` | ORM-модели, мапперы, репозитории, UoW, адаптеры Redis, argon2/JWT, метрики, настройка логов | бизнес-правила, HTTP |
 | `presentation/` | роуты (`DishkaRoute`), pydantic-схемы (только форма запроса), контракт ошибок, `RequestContextMiddleware`, rate limit, `CurrentUser` | SQL, Redis, хэширование (только через порты) |
@@ -59,8 +59,14 @@ client ──HTTPS──▶ nginx :443 ──▶ api (uvicorn, FastAPI) ──�
   и хэш вычисляются по типу и `id`. Идентификаторы — UUIDv7 (`domain/common/ids.py`):
   монотонные внутри процесса, поэтому порядок по `id` совпадает с порядком создания
   (`uuid.uuid7` из стандартной библиотеки Python 3.14).
-- Доменные модули (`users`, `tokens`) друг друга не импортируют. Общие
-  идентификаторы (`UserId`) лежат в shared kernel `domain/common`.
+- Доменные модули (`users`, `tokens`, `projects`, `inventory`, `tasks`, `notifications`,
+  `audit`) друг друга не импортируют. Общее лежит в shared kernel `domain/common`:
+  идентификаторы (`UserId`, `ProjectId`, `RoomId`, `BoxId`, `ItemId`, `TaskId`),
+  `ReminderOffset` (его выбирают у задачи и несёт уведомление) и нормализация текста.
+- Агрегаты и таблицы сопоставлены в [db-design.md](db-design.md#14-агрегаты-домена), границы
+  объясняет [ADR 0009](adr/0009-moving-domain-aggregates.md). Матрицы переходов
+  (`BOX_TRANSITIONS`, `ITEM_TRANSITIONS`, `NOTIFICATION_TRANSITIONS`) лежат рядом с сущностями,
+  их копия в БД — триггеры миграции 0004; тест перебирает все пары и сверяет одно с другим.
 
 ### Application
 
@@ -120,18 +126,35 @@ client ──HTTPS──▶ nginx :443 ──▶ api (uvicorn, FastAPI) ──�
 
 ## Модель данных
 
-Схема создаётся миграцией [0001](../migrations/versions/0001_initial.py); [0002](../migrations/versions/0002_drop_user_email.py) убирает `users.email`.
+Схема создаётся миграцией [0001](../migrations/versions/0001_initial.py); [0002](../migrations/versions/0002_drop_user_email.py) убирает `users.email`;
+[0003](../migrations/versions/0003_add_users_updated_at.py) добавляет служебный `users.updated_at`
+(ставят БД и ORM, домен его не хранит); [0004](../migrations/versions/0004_moving_domain_tables.py)
+создаёт таблицы домена переезда. Полный список ограничений — в
+[db-design.md](db-design.md#11-индексы-и-ограничения). ORM ↔ домен переводят мапперы
+`infrastructure/db/mappers/`; дочерние строки агрегата (участники проекта, ответственные и
+напоминания задачи) — связи `relationship(cascade="all, delete-orphan", lazy="selectin")`
+внутри агрегата, так что `merge()` корня синхронизирует их. Связей между агрегатами в моделях
+нет, только внешние ключи.
 
 | Таблица | Ключевые ограничения |
 |---|---|
 | `users` | частичный уникальный индекс `uq_users_username_active` `WHERE is_active`; CHECK `username = lower(username)` |
 | `refresh_tokens` | хранится только `token_hash` (SHA-256, CHECK длины 64, UNIQUE); `family_id` (сессия, индекс); `revoked_at`; FK на `users` с `ON DELETE CASCADE` |
+| `projects`, `project_collaborators` | CHECK `qr_code_strategy`; PK участника `(project_id, user_id)` |
+| `rooms`, `boxes`, `items` | составные FK `(project_id, …)` не дают сослаться на объект другого проекта; частичные UNIQUE номера коробки и имени комнаты `WHERE is_active`; CHECK `(state = 'IN_BOX') = (box_id IS NOT NULL)`; триггеры переходов статуса коробки и состояния вещи; GIN FTS по `items.name` |
+| `tasks`, `task_collaborators`, `task_reminders` | CHECK `is_done = (done_at IS NOT NULL)`; ответственный — составной FK на `project_collaborators` с `ON DELETE CASCADE`; CHECK `offset_hours BETWEEN 1 AND 8760` |
+| `notifications`, `push_subscriptions` | CHECK «тип ⇔ заполненные поля»; триггер «статус меняется только из `PENDING`»; частичные UNIQUE ожидающих напоминаний; UNIQUE `endpoint` |
+| `audit_logs` | без FK на `entity_id` и `actor_id`; CHECK `entity_type = split_part(action, '_', 1)` |
 
 ### Состояния и переходы
 
 | Объект | Состояния | Переходы | Где защищено |
 |---|---|---|---|
 | Пользователь | `active`, `deleted` (`is_active`) | регистрация → `active`; `SoftDeleteUser`: `active → deleted` (идемпотентно, все сессии отзываются); `RestoreUser`: `deleted → active` (409, если username уже занят) | методы `User`; частичные уникальные индексы `WHERE is_active`; CHECK нижнего регистра username |
+| Коробка | `PACKING → PACKED → LOADED → DELIVERED → UNPACKED` | шаг вперёд или назад (`BOX_TRANSITIONS`); повтор текущего статуса — no-op; откат пишется в журнал отдельно | `Box.change_status`; в БД — CHECK значений и триггер `ck_boxes_status_transition`; гонки — условный `UPDATE … WHERE status = :expected` в репозитории |
+| Вещь | `TO_PACK`, `IN_BOX`, `TAKEN_OUT`, `LOST` | матрица `ITEM_TRANSITIONS` (db-design, 5.2); `box_id` только у `IN_BOX` | методы `Item`; в БД — CHECK `(state = 'IN_BOX') = (box_id IS NOT NULL)` и триггер `ck_items_state_transition` |
+| Задача | `open`, `done` (`done_at`) | `complete` / `reopen` идемпотентны; очистка срока удаляет напоминания | методы `Task`; в БД — CHECK `is_done = (done_at IS NOT NULL)` |
+| Уведомление | `PENDING` → `SENT`, `FAILED`, `CANCELLED`, `SKIPPED` | только из `PENDING`, один раз; до 5 попыток с экспоненциальной задержкой | методы `Notification`; в БД — CHECK по типу, триггер `ck_notifications_status_transition` и частичные UNIQUE |
 | Refresh-токен | `active`, `revoked`, `expired` | вход → `active` в новой семье; ротация: предъявленный `active → revoked` и новый `active` в той же семье; повтор или logout: вся семья → `revoked`; смена пароля или удаление: все токены пользователя → `revoked`; `expired` наступает по времени | `RefreshToken.revoke` (первое время отзыва сохраняется); атомарный `UPDATE … WHERE revoked_at IS NULL RETURNING id`; UNIQUE и CHECK длины `token_hash` |
 
 Переходы выполняются только методами сущностей и атомарными операциями репозиториев.

@@ -26,7 +26,33 @@ from app.application.exceptions import (
     UsernameAlreadyTakenError,
     UserNotFoundError,
 )
-from app.domain.common.errors import DomainError
+from app.domain.common.errors import DomainError, InvalidReminderOffsetError
+from app.domain.inventory.errors import (
+    BoxStatusTransitionError,
+    CrossProjectReferenceError,
+    InvalidBoxNumberError,
+    InvalidItemNameError,
+    InvalidQrTokenError,
+    InvalidQuantityError,
+    InvalidRoomNameError,
+    ItemStateTransitionError,
+    WrongRoomKindError,
+)
+from app.domain.notifications.errors import (
+    InvalidPushSubscriptionError,
+    NotificationAlreadyFinishedError,
+)
+from app.domain.projects.errors import (
+    CannotRemoveOwnerError,
+    InvalidAddressError,
+    InvalidProjectNameError,
+)
+from app.domain.tasks.errors import (
+    InvalidDueDateError,
+    InvalidTaskDescriptionError,
+    InvalidTaskTitleError,
+    ReminderWithoutDueDateError,
+)
 from app.domain.users.errors import (
     InvalidPasswordError,
     InvalidPasswordHashError,
@@ -54,6 +80,34 @@ ERROR_SPECS: dict[type[Exception], ErrorSpec] = {
     DomainError: ErrorSpec(status.HTTP_422_UNPROCESSABLE_CONTENT, "invalid_value"),
     InvalidUsernameError: ErrorSpec(status.HTTP_422_UNPROCESSABLE_CONTENT, "invalid_username"),
     InvalidPasswordError: ErrorSpec(status.HTTP_422_UNPROCESSABLE_CONTENT, "invalid_password"),
+    InvalidReminderOffsetError: ErrorSpec(
+        status.HTTP_422_UNPROCESSABLE_CONTENT, "invalid_reminder_offset"
+    ),
+    InvalidProjectNameError: ErrorSpec(
+        status.HTTP_422_UNPROCESSABLE_CONTENT, "invalid_project_name"
+    ),
+    InvalidAddressError: ErrorSpec(status.HTTP_422_UNPROCESSABLE_CONTENT, "invalid_address"),
+    CannotRemoveOwnerError: ErrorSpec(status.HTTP_409_CONFLICT, "cannot_remove_owner"),
+    InvalidRoomNameError: ErrorSpec(status.HTTP_422_UNPROCESSABLE_CONTENT, "invalid_room_name"),
+    InvalidBoxNumberError: ErrorSpec(status.HTTP_422_UNPROCESSABLE_CONTENT, "invalid_box_number"),
+    InvalidQrTokenError: ErrorSpec(status.HTTP_422_UNPROCESSABLE_CONTENT, "invalid_qr_token"),
+    InvalidItemNameError: ErrorSpec(status.HTTP_422_UNPROCESSABLE_CONTENT, "invalid_item_name"),
+    InvalidQuantityError: ErrorSpec(status.HTTP_422_UNPROCESSABLE_CONTENT, "invalid_quantity"),
+    WrongRoomKindError: ErrorSpec(status.HTTP_422_UNPROCESSABLE_CONTENT, "wrong_room_kind"),
+    CrossProjectReferenceError: ErrorSpec(
+        status.HTTP_422_UNPROCESSABLE_CONTENT, "cross_project_reference"
+    ),
+    BoxStatusTransitionError: ErrorSpec(status.HTTP_409_CONFLICT, "invalid_box_transition"),
+    ItemStateTransitionError: ErrorSpec(status.HTTP_409_CONFLICT, "invalid_item_transition"),
+    InvalidTaskTitleError: ErrorSpec(status.HTTP_422_UNPROCESSABLE_CONTENT, "invalid_task_title"),
+    InvalidTaskDescriptionError: ErrorSpec(
+        status.HTTP_422_UNPROCESSABLE_CONTENT, "invalid_task_description"
+    ),
+    InvalidDueDateError: ErrorSpec(status.HTTP_422_UNPROCESSABLE_CONTENT, "invalid_due_date"),
+    ReminderWithoutDueDateError: ErrorSpec(status.HTTP_409_CONFLICT, "reminder_without_due_date"),
+    InvalidPushSubscriptionError: ErrorSpec(
+        status.HTTP_422_UNPROCESSABLE_CONTENT, "invalid_push_subscription"
+    ),
     # application outcomes
     NotFoundError: ErrorSpec(status.HTTP_404_NOT_FOUND, "not_found"),
     UserNotFoundError: ErrorSpec(status.HTTP_404_NOT_FOUND, "user_not_found"),
@@ -68,8 +122,9 @@ ERROR_SPECS: dict[type[Exception], ErrorSpec] = {
     ),
 }
 
-# DomainErrors that are never the client's fault: a malformed hash comes from our storage.
-_INTERNAL_ERRORS = (InvalidPasswordHashError,)
+# DomainErrors that are never the client's fault: a malformed hash comes from our
+# storage, a finished notification is only ever touched by a buggy worker.
+_INTERNAL_ERRORS = (InvalidPasswordHashError, NotificationAlreadyFinishedError)
 
 
 class RateLimitedError(Exception):

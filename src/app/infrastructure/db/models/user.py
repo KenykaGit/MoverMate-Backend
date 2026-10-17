@@ -30,3 +30,8 @@ class UserModel(Base):
     password_hash: Mapped[str] = mapped_column(Text)
     is_active: Mapped[bool]
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    # Bookkeeping only, the domain never reads it: set by the database on insert
+    # and by SQLAlchemy on every UPDATE of the row.
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )

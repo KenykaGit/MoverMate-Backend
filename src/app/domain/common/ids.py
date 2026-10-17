@@ -8,7 +8,12 @@ from typing import NewType
 from uuid import UUID, uuid7
 
 UserId = NewType("UserId", UUID)
-"""Identity of a User; also how refresh tokens refer to their owner."""
+"""Identity of a User; also how refresh tokens and projects refer to people."""
+ProjectId = NewType("ProjectId", UUID)
+RoomId = NewType("RoomId", UUID)
+BoxId = NewType("BoxId", UUID)
+ItemId = NewType("ItemId", UUID)
+TaskId = NewType("TaskId", UUID)
 
 
 def new_id() -> UUID:

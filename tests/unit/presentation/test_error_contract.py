@@ -2,12 +2,12 @@
 
 import importlib
 import pkgutil
-from uuid import uuid4
 
 import app.application
 import app.domain
 from app.application.exceptions import ApplicationError, UserNotFoundError
 from app.domain.common.errors import DomainError
+from app.domain.common.ids import new_id
 from app.presentation.http.errors import _INTERNAL_ERRORS, ERROR_SPECS, _spec_for
 
 
@@ -49,7 +49,7 @@ def test_codes_are_unique() -> None:
 
 
 def test_most_specific_spec_wins() -> None:
-    spec = _spec_for(UserNotFoundError(uuid4()))  # a NotFoundError ("not_found") too
+    spec = _spec_for(UserNotFoundError(new_id()))  # a NotFoundError ("not_found") too
 
     assert spec is not None
     assert spec.code == "user_not_found"

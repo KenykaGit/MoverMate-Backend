@@ -42,6 +42,11 @@ type = independence
 modules =
     app.domain.users
     app.domain.tokens
+    app.domain.projects
+    app.domain.inventory
+    app.domain.tasks
+    app.domain.notifications
+    app.domain.audit
 
 [importlinter:contract:application_modules]
 name = Application features are independent (auth may use users)

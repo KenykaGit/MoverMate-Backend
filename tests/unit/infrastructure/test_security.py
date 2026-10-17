@@ -1,16 +1,15 @@
 from datetime import timedelta
-from uuid import uuid4
 
 import jwt
 import pytest
 
-from app.domain.common.ids import UserId
+from app.domain.common.ids import UserId, new_id
 from app.domain.users.value_objects import PasswordHash, RawPassword
 from app.infrastructure.security.password import Argon2PasswordHasher
 from app.infrastructure.security.tokens import JwtAccessTokenService, Sha256RefreshTokenGenerator
 
 SECRET = "test-secret-key-that-is-long-enough-for-hs256"
-USER_ID = UserId(uuid4())
+USER_ID = UserId(new_id())
 
 
 @pytest.fixture(scope="module")
