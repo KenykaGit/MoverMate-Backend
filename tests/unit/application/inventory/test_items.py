@@ -136,18 +136,14 @@ class TestCreate:
 
 
 class TestChangeState:
-    @pytest.mark.parametrize(
-        ("state", "with_box"),
-        [(ItemState.IN_BOX, False), (ItemState.LOST, True), (ItemState.TO_PACK, True)],
-    )
-    async def test_box_id_goes_with_in_box_only(
-        self, preset: Preset, state: ItemState, with_box: bool
-    ) -> None:
+    async def test_box_id_goes_with_in_box_only(self, preset: Preset) -> None:
         item = await create_item(preset)
-        box_id = await new_box_id(preset) if with_box else None
+        box_id = await new_box_id(preset)
 
-        with pytest.raises(ItemBoxMismatchError):
-            await change_state(preset, item.id, state, box_id)
+        cases = [(ItemState.IN_BOX, None), (ItemState.LOST, box_id), (ItemState.TO_PACK, box_id)]
+        for state, box in cases:
+            with pytest.raises(ItemBoxMismatchError):
+                await change_state(preset, item.id, state, box)
 
     async def test_lose_and_find_are_recorded(self, preset: Preset) -> None:
         item = await create_item(preset)

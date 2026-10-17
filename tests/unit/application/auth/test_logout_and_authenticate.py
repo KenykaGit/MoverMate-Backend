@@ -107,10 +107,10 @@ class TestAuthenticateUser:
 
         assert result.id == user.id
 
-    @pytest.mark.parametrize("token", ["", "garbage", "access:not-a-uuid"])
-    async def test_invalid_token(self, authenticate: AuthenticateUser, token: str) -> None:
-        with pytest.raises(NotAuthenticatedError):
-            await authenticate(token)
+    async def test_invalid_token(self, authenticate: AuthenticateUser) -> None:
+        for token in ("", "garbage", "access:not-a-uuid"):
+            with pytest.raises(NotAuthenticatedError):
+                await authenticate(token)
 
     async def test_deleted_user_is_rejected_although_the_token_is_valid(
         self,

@@ -1,13 +1,10 @@
-import pytest
-
 from app.domain.audit.entity import AuditAction, AuditEntityType, AuditEntry
 from app.domain.common.ids import ProjectId, new_id
 from tests.factories import NOW
 
 
-@pytest.mark.parametrize("action", list(AuditAction))
-def test_every_action_names_its_entity_type(action: AuditAction) -> None:
-    assert action.entity_type in AuditEntityType
+def test_every_action_names_its_entity_type() -> None:
+    assert [a for a in AuditAction if a.entity_type not in AuditEntityType] == []
 
 
 def test_record_copies_details() -> None:

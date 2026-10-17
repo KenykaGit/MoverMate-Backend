@@ -236,12 +236,12 @@ class TestSetProjectReminders:
         assert len(notifications.notifications) == queued
         assert uow.commits == 1
 
-    @pytest.mark.parametrize("days", [-1, 366])
     async def test_out_of_range(
-        self, set_reminders: SetProjectReminders, project: Project, owner: User, days: int
+        self, set_reminders: SetProjectReminders, project: Project, owner: User
     ) -> None:
-        with pytest.raises(InvalidMovingReminderOffsetError):
-            await set_reminders(reminders_dto(project, owner, days))
+        for days in (-1, 366):
+            with pytest.raises(InvalidMovingReminderOffsetError):
+                await set_reminders(reminders_dto(project, owner, days))
 
     async def test_strangers_get_not_found(
         self, set_reminders: SetProjectReminders, project: Project, stranger: User

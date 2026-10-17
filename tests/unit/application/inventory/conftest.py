@@ -53,6 +53,11 @@ class Preset:
 
 @pytest.fixture
 def preset() -> Preset:
+    return new_preset()
+
+
+def new_preset() -> Preset:
+    """A fresh move: for table-driven tests that need clean state per case."""
     owner, member, stranger = (make_user(username=name) for name in ("owner", "member", "other"))
     project = make_project(owner_id=owner.id)
     project.add_member(member.id)

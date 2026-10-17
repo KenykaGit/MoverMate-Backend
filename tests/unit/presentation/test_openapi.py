@@ -145,29 +145,31 @@ def test_every_operation_is_classified(schema: Schema) -> None:
     assert not (PROTECTED | PUBLIC) & OPTIONAL_AUTH
 
 
-@pytest.mark.parametrize("name", sorted(OPTIONAL_AUTH))
-def test_optional_auth_operations_accept_a_token_and_document_401_and_404(
-    schema: Schema, name: str
-) -> None:
-    operation = operations(schema)[name]
-
-    assert operation.get("security") == [{"HTTPBearer": []}]
-    assert {"401", "404"} <= set(operation["responses"])
+def _error_body(operation: Schema, status: str) -> Schema | None:
+    response = operation["responses"].get(status, {})
+    body: Schema | None = response.get("content", {}).get("application/json", {}).get("schema")
+    return body
 
 
-@pytest.mark.parametrize("name", sorted(PROTECTED))
-def test_protected_operations_declare_bearer_auth_and_401(schema: Schema, name: str) -> None:
-    operation = operations(schema)[name]
+def test_authentication_is_declared_as_classified(schema: Schema) -> None:
+    """Protected operations require the bearer token and document 401; optional ones
+    accept it and also document 404; public ones do not ask for it."""
+    bearer: list[dict[str, list[str]]] = [{"HTTPBearer": []}]
+    wrong = [
+        name
+        for name, operation in operations(schema).items()
+        if (
+            (name in PROTECTED or name in OPTIONAL_AUTH)
+            and (operation.get("security") != bearer or _error_body(operation, "401") is None)
+        )
+        or (name in OPTIONAL_AUTH and "404" not in operation["responses"])
+        or (name in PUBLIC and "security" in operation)
+    ]
 
-    assert operation.get("security") == [{"HTTPBearer": []}]
-    assert operation["responses"]["401"]["content"]["application/json"]["schema"] == {
-        "$ref": ERROR_REF
-    }
-
-
-@pytest.mark.parametrize("name", sorted(PUBLIC))
-def test_public_operations_do_not_require_auth(schema: Schema, name: str) -> None:
-    assert "security" not in operations(schema)[name]
+    assert wrong == []
+    assert all(
+        _error_body(operations(schema)[name], "401") == {"$ref": ERROR_REF} for name in PROTECTED
+    )
 
 
 def test_bearer_scheme_tells_where_tokens_come_from(schema: Schema) -> None:
@@ -249,48 +251,56 @@ def test_only_real_parameters_are_published_with_injection() -> None:
     }
 
 
-@pytest.mark.parametrize(
-    "name", sorted(op for op in PROTECTED | PUBLIC | OPTIONAL_AUTH if "/api/v1/" in op)
-)
-def test_versioned_operations_document_the_error_contract(schema: Schema, name: str) -> None:
-    responses = operations(schema)[name]["responses"]
+def test_versioned_operations_document_the_error_contract(schema: Schema) -> None:
+    undocumented = [
+        f"{name} {status}"
+        for name, operation in operations(schema).items()
+        if "/api/v1/" in name
+        for status in ("422", "429", "500")
+        if _error_body(operation, status) != {"$ref": ERROR_REF}
+    ]
 
-    for status in ("422", "429", "500"):
-        assert responses[status]["content"]["application/json"]["schema"] == {"$ref": ERROR_REF}
+    assert undocumented == []
 
 
-@pytest.mark.parametrize(
-    ("name", "status"),
-    [
-        ("POST /api/v1/auth/register", "409"),
-        ("POST /api/v1/auth/login", "401"),
-        ("POST /api/v1/auth/refresh", "401"),
-        ("PUT /api/v1/users/me/username", "409"),
-        ("DELETE /api/v1/users/me", "409"),
-        ("POST /api/v1/projects", "409"),
-        ("GET /api/v1/projects/{project_id}", "404"),
-        ("PATCH /api/v1/projects/{project_id}", "404"),
-        ("DELETE /api/v1/projects/{project_id}", "403"),
-        ("DELETE /api/v1/projects/{project_id}", "404"),
-        ("PUT /api/v1/projects/{project_id}/reminders", "404"),
-        ("GET /api/v1/projects/{project_id}/collaborators", "404"),
-        ("POST /api/v1/projects/{project_id}/collaborators", "200"),
-        ("POST /api/v1/projects/{project_id}/collaborators", "404"),
-        ("DELETE /api/v1/projects/{project_id}/collaborators/{user_id}", "404"),
-        ("DELETE /api/v1/projects/{project_id}/collaborators/{user_id}", "409"),
-        ("GET /health/ready", "503"),
-        ("POST /api/v1/projects/{project_id}/rooms", "409"),
-        ("DELETE /api/v1/rooms/{room_id}", "409"),
-        ("PUT /api/v1/boxes/{box_id}/status", "409"),
-        ("PUT /api/v1/boxes/{box_id}/contents-reminder", "403"),
-        ("PUT /api/v1/boxes/{box_id}/contents-reminder", "409"),
-        ("PUT /api/v1/items/{item_id}/state", "409"),
-        ("GET /api/v1/items/{item_id}", "404"),
-        *((name, "404") for name in SUMMARY_OPERATION_IDS),
-    ],
-)
-def test_specific_error_statuses_are_documented(schema: Schema, name: str, status: str) -> None:
-    assert status in operations(schema)[name]["responses"]
+# Error statuses of specific operations that clients branch on.
+SPECIFIC_ERRORS = [
+    ("POST /api/v1/auth/register", "409"),
+    ("POST /api/v1/auth/login", "401"),
+    ("POST /api/v1/auth/refresh", "401"),
+    ("PUT /api/v1/users/me/username", "409"),
+    ("DELETE /api/v1/users/me", "409"),
+    ("POST /api/v1/projects", "409"),
+    ("GET /api/v1/projects/{project_id}", "404"),
+    ("PATCH /api/v1/projects/{project_id}", "404"),
+    ("DELETE /api/v1/projects/{project_id}", "403"),
+    ("DELETE /api/v1/projects/{project_id}", "404"),
+    ("PUT /api/v1/projects/{project_id}/reminders", "404"),
+    ("GET /api/v1/projects/{project_id}/collaborators", "404"),
+    ("POST /api/v1/projects/{project_id}/collaborators", "200"),
+    ("POST /api/v1/projects/{project_id}/collaborators", "404"),
+    ("DELETE /api/v1/projects/{project_id}/collaborators/{user_id}", "404"),
+    ("DELETE /api/v1/projects/{project_id}/collaborators/{user_id}", "409"),
+    ("GET /health/ready", "503"),
+    ("POST /api/v1/projects/{project_id}/rooms", "409"),
+    ("DELETE /api/v1/rooms/{room_id}", "409"),
+    ("PUT /api/v1/boxes/{box_id}/status", "409"),
+    ("PUT /api/v1/boxes/{box_id}/contents-reminder", "403"),
+    ("PUT /api/v1/boxes/{box_id}/contents-reminder", "409"),
+    ("PUT /api/v1/items/{item_id}/state", "409"),
+    ("GET /api/v1/items/{item_id}", "404"),
+    *((name, "404") for name in SUMMARY_OPERATION_IDS),
+]
+
+
+def test_specific_error_statuses_are_documented(schema: Schema) -> None:
+    missing = [
+        (name, status)
+        for name, status in SPECIFIC_ERRORS
+        if status not in operations(schema)[name]["responses"]
+    ]
+
+    assert missing == []
 
 
 def _is_named(body: Schema) -> bool:

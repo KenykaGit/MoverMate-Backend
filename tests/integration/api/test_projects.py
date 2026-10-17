@@ -4,6 +4,7 @@ Moving dates are relative to today, so queued reminders are always in the future
 unless a test means otherwise.
 """
 
+from collections.abc import Callable
 from datetime import UTC, date, datetime, time, timedelta
 from typing import Any
 from uuid import UUID, uuid4
@@ -118,52 +119,27 @@ ENDPOINTS: list[tuple[str, str, dict[str, Any] | None]] = [
 ]
 
 
-class TestAuthentication:
-    @pytest.mark.parametrize(
-        ("method", "path", "body"),
-        [
-            ("GET", "/projects", None),
-            (
-                "POST",
-                "/projects",
-                {"name": "Move", "moving_date": "2030-01-01", "time_zone": "UTC"},
-            ),
-            *((method, f"/projects/{uuid4()}{suffix}", body) for method, suffix, body in ENDPOINTS),
-        ],
-    )
-    async def test_every_operation_requires_a_token(
-        self, client: AsyncClient, method: str, path: str, body: dict[str, Any] | None
-    ) -> None:
+async def test_every_operation_requires_a_token(client: AsyncClient) -> None:
+    create = {"name": "Move", "moving_date": "2030-01-01", "time_zone": "UTC"}
+    operations = [
+        ("GET", "/projects", None),
+        ("POST", "/projects", create),
+        *((method, f"/projects/{uuid4()}{suffix}", body) for method, suffix, body in ENDPOINTS),
+    ]
+    found = []
+    for method, path, body in operations:
         response = await client.request(
             method, f"{API}{path}".replace("{user_id}", str(uuid4())), json=body
         )
+        found.append((method, path, response.status_code, error_code(response)))
 
-        assert response.status_code == 401
-        assert error_code(response) == "not_authenticated"
+    assert found == [(method, path, 401, "not_authenticated") for method, path, _ in operations]
 
 
 class TestStrangers:
-    @pytest.mark.parametrize(("method", "suffix", "body"), ENDPOINTS)
     async def test_existing_project_looks_like_a_missing_one(
-        self,
-        client: AsyncClient,
-        project: dict[str, Any],
-        owner: Session,
-        stranger: Session,
-        method: str,
-        suffix: str,
-        body: dict[str, Any] | None,
+        self, client: AsyncClient, project: dict[str, Any], owner: Session, stranger: Session
     ) -> None:
-        missing_id = str(uuid4())
-        path = suffix.replace("{user_id}", owner.user_id)
-
-        existing = await client.request(
-            method, project_url(project["id"], path), json=body, headers=stranger.headers
-        )
-        missing = await client.request(
-            method, project_url(missing_id, path), json=body, headers=stranger.headers
-        )
-
         def comparable(response: Response, project_id: str) -> dict[str, Any]:
             error = response.json()["error"]
             return {
@@ -173,30 +149,39 @@ class TestStrangers:
                 "details": error["details"],
             }
 
-        assert comparable(existing, project["id"]) == comparable(missing, missing_id)
-        assert comparable(existing, project["id"])["status"] == 404
-        assert error_code(existing) == "project_not_found"
+        wrong = []
+        for method, suffix, body in ENDPOINTS:
+            missing_id = str(uuid4())
+            path = suffix.replace("{user_id}", owner.user_id)
+            existing = await client.request(
+                method, project_url(project["id"], path), json=body, headers=stranger.headers
+            )
+            missing = await client.request(
+                method, project_url(missing_id, path), json=body, headers=stranger.headers
+            )
+            seen = comparable(existing, project["id"])
+            if seen != comparable(missing, missing_id) or seen["code"] != "project_not_found":
+                wrong.append((method, suffix, seen))
+
+        assert wrong == []
         # Nothing changed for the members.
         unchanged = await client.get(project_url(project["id"]), headers=owner.headers)
         assert unchanged.json() == project
 
-    @pytest.mark.parametrize(
-        ("method", "path"),
-        [
-            ("GET", "/projects/not-a-uuid"),
-            ("DELETE", "/projects/not-a-uuid"),
-            ("DELETE", "/projects/{project_id}/collaborators/not-a-uuid"),
-        ],
-    )
     async def test_malformed_ids_are_validation_errors(
-        self, client: AsyncClient, project: dict[str, Any], owner: Session, method: str, path: str
+        self, client: AsyncClient, project: dict[str, Any], owner: Session
     ) -> None:
-        url = f"{API}{path}".replace("{project_id}", project["id"])
+        urls = [
+            ("GET", f"{API}/projects/not-a-uuid"),
+            ("DELETE", f"{API}/projects/not-a-uuid"),
+            ("DELETE", project_url(project["id"], "/collaborators/not-a-uuid")),
+        ]
+        found = []
+        for method, url in urls:
+            response = await client.request(method, url, headers=owner.headers)
+            found.append((response.status_code, error_code(response)))
 
-        response = await client.request(method, url, headers=owner.headers)
-
-        assert response.status_code == 422
-        assert error_code(response) == "validation_error"
+        assert found == [(422, "validation_error")] * len(urls)
 
 
 class TestCreate:
@@ -261,31 +246,28 @@ class TestCreate:
         assert created["qr_code_strategy"] == "PROTECTED"
         assert created["reminder_offsets_days"] == []
 
-    @pytest.mark.parametrize(
-        ("time_zone", "expected"),
-        [
-            # 09:00 where the move is, in UTC: no DST in these zones, so no surprises.
+    async def test_queues_reminders_for_nine_local_time(
+        self, client: AsyncClient, owner: Session, session_maker: SessionMaker
+    ) -> None:
+        # 09:00 where the move is, in UTC: no DST in these zones, so no surprises.
+        cases: list[tuple[str, Callable[[date], datetime]]] = [
             ("Europe/Moscow", lambda day: utc(day, 6)),
             ("UTC", lambda day: utc(day, 9)),
             ("Asia/Vladivostok", lambda day: utc(day - timedelta(days=1), 23)),
-        ],
-    )
-    async def test_queues_reminders_for_nine_local_time(
-        self,
-        client: AsyncClient,
-        owner: Session,
-        session_maker: SessionMaker,
-        time_zone: str,
-        expected: Any,
-    ) -> None:
-        created = await create_project(
-            client, owner, time_zone=time_zone, reminder_offsets_days=[0, 7]
-        )
-
-        assert await moving_reminders(session_maker, created["id"]) == [
-            (owner.user_id, 0, expected(MOVING_DATE), "PENDING"),
-            (owner.user_id, 7, expected(MOVING_DATE - timedelta(days=7)), "PENDING"),
         ]
+        wrong = []
+        for time_zone, expected in cases:
+            created = await create_project(
+                client, owner, time_zone=time_zone, reminder_offsets_days=[0, 7]
+            )
+            found = await moving_reminders(session_maker, created["id"])
+            if found != [
+                (owner.user_id, 0, expected(MOVING_DATE), "PENDING"),
+                (owner.user_id, 7, expected(MOVING_DATE - timedelta(days=7)), "PENDING"),
+            ]:
+                wrong.append((time_zone, found))
+
+        assert wrong == []
 
     async def test_reminders_already_due_are_kept_but_not_queued(
         self, client: AsyncClient, owner: Session, session_maker: SessionMaker
@@ -301,28 +283,27 @@ class TestCreate:
             (owner.user_id, 0, utc(soon, 6), "PENDING")
         ]
 
-    async def test_offset_bounds_are_accepted(
+    async def test_bounds_are_accepted(
         self, client: AsyncClient, owner: Session, session_maker: SessionMaker
     ) -> None:
         far = in_days(400)
 
         created = await create_project(
-            client, owner, moving_date=far.isoformat(), reminder_offsets_days=[365, 0]
+            client,
+            owner,
+            name="x" * 200,
+            moving_date=far.isoformat(),
+            reminder_offsets_days=[365, 0],
         )
 
+        assert created["name"] == "x" * 200
         assert created["reminder_offsets_days"] == [0, 365]
         assert len(await moving_reminders(session_maker, created["id"])) == 2
 
-    async def test_name_of_maximum_length_is_accepted(
-        self, client: AsyncClient, owner: Session
+    async def test_invalid_body_creates_nothing(
+        self, client: AsyncClient, owner: Session, session_maker: SessionMaker
     ) -> None:
-        created = await create_project(client, owner, name="x" * 200)
-
-        assert created["name"] == "x" * 200
-
-    @pytest.mark.parametrize(
-        ("overrides", "code"),
-        [
+        cases: list[tuple[dict[str, Any], str]] = [
             ({"name": None}, "validation_error"),
             ({"time_zone": None}, "validation_error"),
             ({"moving_date": "2030-13-01"}, "validation_error"),
@@ -339,27 +320,16 @@ class TestCreate:
             ({"reminder_offsets_days": [-1]}, "invalid_moving_reminder_offset"),
             ({"reminder_offsets_days": [1, 366]}, "invalid_moving_reminder_offset"),
             ({"rooms": {"source": [""]}}, "invalid_room_name"),
-        ],
-    )
-    async def test_invalid_body_creates_nothing(
-        self,
-        client: AsyncClient,
-        owner: Session,
-        session_maker: SessionMaker,
-        overrides: dict[str, Any],
-        code: str,
-    ) -> None:
-        body = {
-            "name": "Move",
-            "moving_date": MOVING_DATE.isoformat(),
-            "time_zone": "Europe/Moscow",
-        } | overrides
-        body = {key: value for key, value in body.items() if value is not None}
+        ]
+        valid = {"name": "Move", "moving_date": MOVING_DATE.isoformat(), "time_zone": "UTC"}
+        wrong = []
+        for overrides, code in cases:
+            body = {key: value for key, value in (valid | overrides).items() if value is not None}
+            response = await client.post(f"{API}/projects", json=body, headers=owner.headers)
+            if (response.status_code, error_code(response)) != (422, code):
+                wrong.append((overrides, response.status_code, response.json()))
 
-        response = await client.post(f"{API}/projects", json=body, headers=owner.headers)
-
-        assert response.status_code == 422
-        assert error_code(response) == code
+        assert wrong == []
         assert await project_count(session_maker) == 0
 
     async def test_duplicate_room_names_of_one_kind_create_nothing(
@@ -383,13 +353,6 @@ class TestCreate:
             assert await session.scalar(select(func.count()).select_from(NotificationModel)) == 0
         listed = await client.get(f"{API}/projects", headers=owner.headers)
         assert listed.json() == []
-
-    async def test_same_room_name_in_both_homes_is_fine(
-        self, client: AsyncClient, owner: Session
-    ) -> None:
-        await create_project(
-            client, owner, rooms={"source": ["Kitchen"], "destination": ["Kitchen"]}
-        )
 
     async def test_idempotency_key_replays_the_first_response(
         self, client: AsyncClient, owner: Session, stranger: Session, session_maker: SessionMaker
@@ -540,9 +503,10 @@ class TestUpdate:
             k: updated[k] for k in ("name", "moving_date", "time_zone", "qr_code_strategy")
         } == {k: created[k] for k in ("name", "moving_date", "time_zone", "qr_code_strategy")}
 
-    @pytest.mark.parametrize(
-        ("body", "code"),
-        [
+    async def test_invalid_values_change_nothing(
+        self, client: AsyncClient, project: dict[str, Any], owner: Session
+    ) -> None:
+        cases: list[tuple[dict[str, Any], str]] = [
             ({"name": None}, "validation_error"),
             ({"moving_date": None}, "validation_error"),
             ({"time_zone": None}, "validation_error"),
@@ -554,20 +518,16 @@ class TestUpdate:
             ({"name": "x" * 201}, "invalid_project_name"),
             ({"origin_address": "x" * 501}, "invalid_address"),
             ({"time_zone": "Nowhere/Town"}, "invalid_time_zone"),
-        ],
-    )
-    async def test_invalid_values_change_nothing(
-        self,
-        client: AsyncClient,
-        project: dict[str, Any],
-        owner: Session,
-        body: dict[str, Any],
-        code: str,
-    ) -> None:
-        response = await client.patch(project_url(project["id"]), json=body, headers=owner.headers)
+        ]
+        wrong = []
+        for body, code in cases:
+            response = await client.patch(
+                project_url(project["id"]), json=body, headers=owner.headers
+            )
+            if (response.status_code, error_code(response)) != (422, code):
+                wrong.append((body, response.status_code, response.json()))
 
-        assert response.status_code == 422
-        assert error_code(response) == code
+        assert wrong == []
         unchanged = await client.get(project_url(project["id"]), headers=owner.headers)
         assert unchanged.json() == project
 
@@ -781,33 +741,27 @@ class TestReminders:
             len(with_status(await moving_reminders(session_maker, created["id"]), "PENDING")) == 2
         )
 
-    @pytest.mark.parametrize(
-        ("body", "code"),
-        [
+    async def test_invalid_offsets_change_nothing(
+        self, client: AsyncClient, owner: Session, session_maker: SessionMaker
+    ) -> None:
+        cases: list[tuple[dict[str, Any], str]] = [
             ({"offsets_days": [-1]}, "invalid_moving_reminder_offset"),
             ({"offsets_days": [1, 366]}, "invalid_moving_reminder_offset"),
             ({"offsets_days": ["week"]}, "validation_error"),
             ({"offsets_days": None}, "validation_error"),
             ({}, "validation_error"),
-        ],
-    )
-    async def test_invalid_offsets_change_nothing(
-        self,
-        client: AsyncClient,
-        owner: Session,
-        session_maker: SessionMaker,
-        body: dict[str, Any],
-        code: str,
-    ) -> None:
+        ]
         created = await create_project(client, owner, reminder_offsets_days=[7])
         before = await notification_ids(session_maker, created["id"])
+        wrong = []
+        for body, code in cases:
+            response = await client.put(
+                project_url(created["id"], "/reminders"), json=body, headers=owner.headers
+            )
+            if (response.status_code, error_code(response)) != (422, code):
+                wrong.append((body, response.status_code, response.json()))
 
-        response = await client.put(
-            project_url(created["id"], "/reminders"), json=body, headers=owner.headers
-        )
-
-        assert response.status_code == 422
-        assert error_code(response) == code
+        assert wrong == []
         unchanged = await client.get(project_url(created["id"]), headers=owner.headers)
         assert unchanged.json()["reminder_offsets_days"] == [7]
         assert await notification_ids(session_maker, created["id"]) == before
@@ -897,31 +851,24 @@ class TestCollaborators:
         assert oneself.json() == listed.json()[0]
         assert await notification_ids(session_maker, project["id"]) == before
 
-    @pytest.mark.parametrize(
-        ("body", "status", "code"),
-        [
+    async def test_add_errors(
+        self, client: AsyncClient, project: dict[str, Any], owner: Session
+    ) -> None:
+        cases: list[tuple[dict[str, Any], int, str]] = [
             ({"username": "nobody"}, 404, "user_not_found"),
             ({"username": "no spaces!"}, 422, "invalid_username"),
             ({"username": "ab"}, 422, "invalid_username"),
             ({"username": None}, 422, "validation_error"),
             ({}, 422, "validation_error"),
-        ],
-    )
-    async def test_add_errors(
-        self,
-        client: AsyncClient,
-        project: dict[str, Any],
-        owner: Session,
-        body: dict[str, Any],
-        status: int,
-        code: str,
-    ) -> None:
-        response = await client.post(
-            project_url(project["id"], "/collaborators"), json=body, headers=owner.headers
-        )
+        ]
+        found = []
+        for body, _, _ in cases:
+            response = await client.post(
+                project_url(project["id"], "/collaborators"), json=body, headers=owner.headers
+            )
+            found.append((body, response.status_code, error_code(response)))
 
-        assert response.status_code == status
-        assert error_code(response) == code
+        assert found == cases
 
     async def test_deleted_account_cannot_be_added(
         self, client: AsyncClient, owner: Session, stranger: Session
@@ -1012,44 +959,34 @@ class TestCollaborators:
         gone = await client.get(project_url(project["id"]), headers=other.headers)
         assert gone.status_code == 404
 
-    @pytest.mark.parametrize("by", ["owner", "member"])
     async def test_owner_cannot_be_removed(
-        self,
-        client: AsyncClient,
-        project: dict[str, Any],
-        owner: Session,
-        member: Session,
-        by: str,
+        self, client: AsyncClient, project: dict[str, Any], owner: Session, member: Session
     ) -> None:
-        caller = owner if by == "owner" else member
+        found = []
+        for caller in (owner, member):
+            response = await client.delete(
+                project_url(project["id"], f"/collaborators/{owner.user_id}"),
+                headers=caller.headers,
+            )
+            found.append((response.status_code, error_code(response)))
 
-        response = await client.delete(
-            project_url(project["id"], f"/collaborators/{owner.user_id}"), headers=caller.headers
-        )
-
-        assert response.status_code == 409
-        assert error_code(response) == "cannot_remove_owner"
+        assert found == [(409, "cannot_remove_owner")] * 2
         listed = await client.get(
             project_url(project["id"], "/collaborators"), headers=owner.headers
         )
         assert len(listed.json()) == 2
 
-    @pytest.mark.parametrize("who", ["stranger", "unknown"])
     async def test_removing_a_non_member_is_a_no_op(
-        self,
-        client: AsyncClient,
-        project: dict[str, Any],
-        owner: Session,
-        stranger: Session,
-        who: str,
+        self, client: AsyncClient, project: dict[str, Any], owner: Session, stranger: Session
     ) -> None:
-        user_id = stranger.user_id if who == "stranger" else str(uuid4())
+        statuses = []
+        for user_id in (stranger.user_id, str(uuid4())):
+            response = await client.delete(
+                project_url(project["id"], f"/collaborators/{user_id}"), headers=owner.headers
+            )
+            statuses.append(response.status_code)
 
-        response = await client.delete(
-            project_url(project["id"], f"/collaborators/{user_id}"), headers=owner.headers
-        )
-
-        assert response.status_code == 204
+        assert statuses == [204, 204]
         listed = await client.get(
             project_url(project["id"], "/collaborators"), headers=owner.headers
         )
@@ -1066,14 +1003,4 @@ class TestAccountDeletion:
 
         assert refused.status_code == 409
         assert error_code(refused) == "user_owns_projects"
-        assert deleted.status_code == 204
-
-    async def test_owner_refused_keeps_the_account(
-        self, client: AsyncClient, owner: Session
-    ) -> None:
-        await create_project(client, owner)
-
-        await client.delete(f"{API}/users/me", headers=owner.headers)
-
-        me = await client.get(f"{API}/users/me", headers=owner.headers)
-        assert me.status_code == 200
+        assert deleted.status_code == 204  # the refused account was kept

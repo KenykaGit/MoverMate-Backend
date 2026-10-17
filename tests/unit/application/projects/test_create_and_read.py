@@ -1,4 +1,5 @@
 from datetime import UTC, datetime
+from typing import Any
 
 import pytest
 
@@ -127,25 +128,19 @@ class TestCreateProject:
             MovingDateReminder(MovingReminderOffset(1))
         ]
 
-    @pytest.mark.parametrize(
-        ("overrides", "error"),
-        [
+    async def test_invalid_values_write_nothing(
+        self, create: CreateProject, owner: User, projects: InMemoryProjectRepository
+    ) -> None:
+        cases: list[tuple[dict[str, Any], type[Exception]]] = [
             ({"time_zone": "Mars/Olympus"}, InvalidTimeZoneError),
             ({"time_zone": "europe/moscow"}, InvalidTimeZoneError),
             ({"reminder_offsets_days": (366,)}, InvalidMovingReminderOffsetError),
             ({"reminder_offsets_days": (-1,)}, InvalidMovingReminderOffsetError),
-        ],
-    )
-    async def test_invalid_values_write_nothing(
-        self,
-        create: CreateProject,
-        owner: User,
-        projects: InMemoryProjectRepository,
-        overrides: dict[str, object],
-        error: type[Exception],
-    ) -> None:
-        with pytest.raises(error):
-            await create(self.dto(owner, **overrides))
+        ]
+        for overrides, error in cases:
+            with pytest.raises(error):
+                await create(self.dto(owner, **overrides))
+
         assert projects.projects == {}
 
 

@@ -17,10 +17,12 @@ USER_ID = new_id()
 TARGET_ID = new_id()
 
 
-@pytest.mark.parametrize("priority", list(Priority))
-def test_priority_is_published_by_name_and_stored_as_a_number(priority: Priority) -> None:
-    assert ItemPriority.of(priority).to_domain() is priority
-    assert ItemPriority.of(priority).value == priority.name
+def test_priority_is_published_by_name_and_stored_as_a_number() -> None:
+    published = {priority: ItemPriority.of(priority) for priority in Priority}
+
+    assert {p: (s.to_domain(), s.value) for p, s in published.items()} == {
+        p: (p, p.name) for p in Priority
+    }
 
 
 class TestPartialUpdates:
@@ -36,14 +38,14 @@ class TestPartialUpdates:
 
         assert (dto.title, dto.is_fragile, dto.destination_room_id) == (None, True, UNSET)
 
-    @pytest.mark.parametrize("field", ["is_fragile", "destination_room_id"])
-    def test_null_is_rejected_where_a_field_cannot_be_cleared(self, field: str) -> None:
-        body = UpdateBoxRequest.model_validate({field: None})
+    def test_null_is_rejected_where_a_field_cannot_be_cleared(self) -> None:
+        for field in ("is_fragile", "destination_room_id"):
+            body = UpdateBoxRequest.model_validate({field: None})
 
-        with pytest.raises(RequestValidationError) as exc_info:
-            body.to_dto(user_id=USER_ID, box_id=TARGET_ID)
+            with pytest.raises(RequestValidationError) as exc_info:
+                body.to_dto(user_id=USER_ID, box_id=TARGET_ID)
 
-        assert exc_info.value.errors()[0]["loc"] == ("body", field)
+            assert exc_info.value.errors()[0]["loc"] == ("body", field)
 
     def test_item_priority_is_translated_only_when_sent(self) -> None:
         sent = UpdateItemRequest.model_validate({"priority": "LOW", "quantity": 3})

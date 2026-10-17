@@ -74,15 +74,9 @@ class TestClaimNextDue:
         assert str(claimed.id) == oldest
         assert str(claimed.id) != later
 
-    async def test_due_exactly_now_counts(self, engine: AsyncEngine, session: AsyncSession) -> None:
-        due = await seed(engine, scheduled_at=NOW)
-
-        claimed = await SqlAlchemyNotificationRepository(session).claim_next_due(NOW)
-
-        assert claimed is not None
-        assert str(claimed.id) == due
-
-    async def test_ties_are_broken_by_id(self, engine: AsyncEngine, session: AsyncSession) -> None:
+    async def test_due_exactly_now_counts_and_ties_are_broken_by_id(
+        self, engine: AsyncEngine, session: AsyncSession
+    ) -> None:
         ids = sorted([await seed(engine, scheduled_at=NOW) for _ in range(3)], key=UUID)
 
         claimed = await SqlAlchemyNotificationRepository(session).claim_next_due(NOW)

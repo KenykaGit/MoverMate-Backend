@@ -78,18 +78,14 @@ class TestSubscribe:
 
         assert len(await subscriptions.list_active_for_user(ALICE)) == 1
 
-    @pytest.mark.parametrize(
-        "dto",
-        [
+    async def test_malformed(self, subscribe: SubscribeToPush, uow: FakeUnitOfWork) -> None:
+        malformed = [
             SubscribeDTO(user_id=ALICE, endpoint="http://insecure.example/x", p256dh="A", auth="B"),
             SubscribeDTO(user_id=ALICE, endpoint=ENDPOINT, p256dh="not base64!", auth="B"),
-        ],
-    )
-    async def test_malformed(
-        self, subscribe: SubscribeToPush, uow: FakeUnitOfWork, dto: SubscribeDTO
-    ) -> None:
-        with pytest.raises(InvalidPushSubscriptionError):
-            await subscribe(dto)
+        ]
+        for dto in malformed:
+            with pytest.raises(InvalidPushSubscriptionError):
+                await subscribe(dto)
         assert uow.commits == 0
 
 
@@ -107,25 +103,18 @@ class TestUnsubscribe:
 
         assert await subscriptions.list_active_for_user(ALICE) == []
 
-    @pytest.mark.parametrize(
-        "dto",
-        [
-            UnsubscribeDTO(user_id=BOB, endpoint=ENDPOINT),  # someone else's browser
-            UnsubscribeDTO(user_id=ALICE, endpoint="https://unknown.example/x"),
-            UnsubscribeDTO(user_id=ALICE, endpoint="not a url"),
-        ],
-    )
     async def test_others_are_silently_ignored(
         self,
         subscribe: SubscribeToPush,
         unsubscribe: UnsubscribeFromPush,
         subscriptions: InMemoryPushSubscriptionRepository,
         uow: FakeUnitOfWork,
-        dto: UnsubscribeDTO,
     ) -> None:
         await subscribe(subscribe_dto())
 
-        await unsubscribe(dto)
+        await unsubscribe(UnsubscribeDTO(user_id=BOB, endpoint=ENDPOINT))  # someone else's
+        await unsubscribe(UnsubscribeDTO(user_id=ALICE, endpoint="https://unknown.example/x"))
+        await unsubscribe(UnsubscribeDTO(user_id=ALICE, endpoint="not a url"))
 
         assert len(await subscriptions.list_active_for_user(ALICE)) == 1
         assert uow.commits == 1  # the subscribe only

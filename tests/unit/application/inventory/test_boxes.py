@@ -7,7 +7,6 @@ from app.application.exceptions import (
     BoxNotFoundError,
     BoxNotPackingError,
     BoxStatusConflictError,
-    NotAuthenticatedError,
     NotBoxCreatorError,
     ProjectNotFoundError,
     ReminderInThePastError,
@@ -26,7 +25,6 @@ from app.application.inventory.dto import (
     GetBoxByQrDTO,
     NewItemEntryDTO,
     NewItemsDTO,
-    QrAccessLevel,
     ScheduleContentsReminderDTO,
     UpdateBoxDTO,
 )
@@ -39,8 +37,7 @@ from app.domain.inventory.box import BoxStatus
 from app.domain.inventory.errors import BoxStatusTransitionError, WrongRoomKindError
 from app.domain.inventory.item import ItemState
 from app.domain.inventory.value_objects import Priority
-from app.domain.projects.value_objects import QrCodeStrategy
-from tests.unit.application.inventory.conftest import Preset, other_project
+from tests.unit.application.inventory.conftest import Preset, new_preset, other_project
 
 
 async def create_box(
@@ -251,37 +248,38 @@ class TestContentsReminder:
         assert [n.scheduled_at for n in preset.notifications.pending()] == [later]
         assert view.contents_reminder_at == later
 
-    @pytest.mark.parametrize(
-        ("who", "packed", "remind_in", "error"),
-        [
+    async def test_rules(self) -> None:
+        cases: list[tuple[str, bool, timedelta, type[Exception]]] = [
             ("member", False, timedelta(hours=1), NotBoxCreatorError),
             ("owner", True, timedelta(hours=1), BoxNotPackingError),
             ("owner", False, -timedelta(minutes=1), ReminderInThePastError),
             ("stranger", False, timedelta(hours=1), BoxNotFoundError),
-        ],
-    )
-    async def test_rules(
-        self,
-        preset: Preset,
-        who: str,
-        packed: bool,
-        remind_in: timedelta,
-        error: type[Exception],
-    ) -> None:
-        box = await create_box(preset)
-        if packed:
-            await preset.make(ChangeBoxStatus)(
-                ChangeBoxStatusDTO(user_id=preset.owner.id, box_id=box.id, status=BoxStatus.PACKED)
-            )
-        user = {"owner": preset.owner, "member": preset.member, "stranger": preset.stranger}[who]
-
-        with pytest.raises(error):
-            await preset.make(ScheduleContentsReminder)(
-                ScheduleContentsReminderDTO(
-                    user_id=user.id, box_id=box.id, remind_at=datetime.now(UTC) + remind_in
+        ]
+        found = []
+        for who, packed, remind_in, _ in cases:
+            preset = new_preset()
+            box = await create_box(preset)
+            if packed:
+                await preset.make(ChangeBoxStatus)(
+                    ChangeBoxStatusDTO(
+                        user_id=preset.owner.id, box_id=box.id, status=BoxStatus.PACKED
+                    )
                 )
-            )
-        assert preset.notifications.pending() == []
+            user = {"owner": preset.owner, "member": preset.member, "stranger": preset.stranger}
+            try:
+                await preset.make(ScheduleContentsReminder)(
+                    ScheduleContentsReminderDTO(
+                        user_id=user[who].id, box_id=box.id, remind_at=datetime.now(UTC) + remind_in
+                    )
+                )
+            except Exception as error:  # noqa: BLE001  # the type is what is checked
+                raised: type[Exception] | None = type(error)
+            else:
+                raised = None
+            found.append((who, packed, remind_in, raised))
+            assert preset.notifications.pending() == []
+
+        assert found == cases
 
     async def test_cancel_is_for_the_creator_and_idempotent(self, preset: Preset) -> None:
         box = await create_box(preset)
@@ -299,49 +297,12 @@ class TestContentsReminder:
 
 
 class TestGetBoxByQr:
-    @pytest.mark.parametrize(
-        ("strategy", "who", "expected"),
-        [
-            (QrCodeStrategy.PROTECTED, "anonymous", NotAuthenticatedError),
-            (QrCodeStrategy.PROTECTED, "stranger", BoxNotFoundError),
-            (QrCodeStrategy.PROTECTED, "member", QrAccessLevel.WRITE),
-            (QrCodeStrategy.OPEN, "anonymous", QrAccessLevel.READ),
-            (QrCodeStrategy.OPEN, "stranger", QrAccessLevel.READ),
-            (QrCodeStrategy.OPEN, "member", QrAccessLevel.WRITE),
-        ],
-    )
-    async def test_access_matrix(
-        self,
-        preset: Preset,
-        strategy: QrCodeStrategy,
-        who: str,
-        expected: QrAccessLevel | type[Exception],
-    ) -> None:
-        preset.projects.projects[preset.project.id].change_qr_code_strategy(strategy)
-        box = await create_box(preset)
-        user_id = {"anonymous": None, "stranger": preset.stranger.id, "member": preset.member.id}[
-            who
-        ]
+    async def test_malformed_and_unknown_tokens_are_not_found(self, preset: Preset) -> None:
         get = preset.make(GetBoxByQr)
-        data = GetBoxByQrDTO(user_id=user_id, qr_token=box.qr_token)
 
-        if isinstance(expected, QrAccessLevel):
-            found = await get(data)
-            assert (found.access, found.box.id, found.project.name) == (
-                expected,
-                box.id,
-                "Moving to Kazan",
-            )
-        else:
-            with pytest.raises(expected):
-                await get(data)
-
-    @pytest.mark.parametrize("token", ["short", "AAAAAAAAAAAAAAAAAAAAAA"])
-    async def test_malformed_and_unknown_tokens_are_not_found(
-        self, preset: Preset, token: str
-    ) -> None:
-        with pytest.raises(BoxNotFoundError):
-            await preset.make(GetBoxByQr)(GetBoxByQrDTO(user_id=preset.owner.id, qr_token=token))
+        for token in ["short", "AAAAAAAAAAAAAAAAAAAAAA"]:
+            with pytest.raises(BoxNotFoundError):
+                await get(GetBoxByQrDTO(user_id=preset.owner.id, qr_token=token))
 
     async def test_a_box_of_a_deleted_project_is_not_found(self, preset: Preset) -> None:
         box = await create_box(preset)

@@ -20,6 +20,7 @@ from app.domain.tasks.value_objects import (
     TaskTemplateId,
     TaskTitle,
 )
+from tests.checks import Rejection, not_rejected
 from tests.factories import NOW, make_task
 
 DUE = NOW + timedelta(days=10)
@@ -27,14 +28,14 @@ DAY = ReminderOffset(24)
 
 
 class TestValueObjects:
-    @pytest.mark.parametrize("value", [" ", "a" * (TASK_TITLE_MAX_LENGTH + 1)])
-    def test_title_length(self, value: str) -> None:
-        with pytest.raises(InvalidTaskTitleError):
-            TaskTitle(value)
+    def test_reject_values_out_of_their_rules(self) -> None:
+        cases: list[Rejection] = [
+            (TaskTitle, " ", InvalidTaskTitleError),
+            (TaskTitle, "a" * (TASK_TITLE_MAX_LENGTH + 1), InvalidTaskTitleError),
+            (TaskDescription, "a" * (TASK_DESCRIPTION_MAX_LENGTH + 1), InvalidTaskDescriptionError),
+        ]
 
-    def test_description_length(self) -> None:
-        with pytest.raises(InvalidTaskDescriptionError):
-            TaskDescription("a" * (TASK_DESCRIPTION_MAX_LENGTH + 1))
+        assert not_rejected(cases) == []
 
 
 def test_naive_due_time_is_rejected() -> None:
@@ -70,23 +71,16 @@ def test_from_template_copies_title_description_and_phase_only() -> None:
     assert not first.is_done
 
 
-class TestCompletion:
-    def test_complete_keeps_the_first_time(self) -> None:
-        task = make_task()
+def test_complete_keeps_the_first_time_and_reopen_clears_it() -> None:
+    task = make_task()
 
-        assert task.complete(now=NOW)
-        assert not task.complete(now=NOW + timedelta(hours=1))
-        assert task.done_at == NOW
-        assert task.is_done
+    assert task.complete(now=NOW)
+    assert not task.complete(now=NOW + timedelta(hours=1))
+    assert (task.is_done, task.done_at) == (True, NOW)
 
-    def test_reopen(self) -> None:
-        task = make_task()
-        task.complete(now=NOW)
-
-        assert task.reopen()
-        assert not task.reopen()
-        assert not task.is_done
-        assert task.done_at is None
+    assert task.reopen()
+    assert not task.reopen()
+    assert (task.is_done, task.done_at) == (False, None)
 
 
 class TestReminders:
@@ -125,12 +119,13 @@ class TestReminders:
         assert task.reminders == set()
         assert task.reminder_times() == {}
 
-    def test_remove(self) -> None:
+    def test_remove_reports_changes(self) -> None:
         task = make_task(due_at=DUE)
         task.add_reminder(DAY)
 
         assert task.remove_reminder(DAY)
         assert not task.remove_reminder(DAY)
+        assert task.reminders == set()
 
 
 def test_assign_and_unassign_report_changes() -> None:

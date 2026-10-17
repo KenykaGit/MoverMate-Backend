@@ -1,5 +1,3 @@
-import pytest
-
 from app.domain.users.entity import User
 from app.domain.users.errors import (
     InvalidPasswordError,
@@ -14,6 +12,7 @@ from app.domain.users.value_objects import (
     RawPassword,
     Username,
 )
+from tests.checks import Rejection, not_rejected
 from tests.factories import make_user
 
 
@@ -21,47 +20,28 @@ class TestUsername:
     def test_is_normalized_to_trimmed_lowercase(self) -> None:
         assert Username("  John_Doe ").value == "john_doe"
 
-    @pytest.mark.parametrize("value", ["ab", "a" * (USERNAME_MAX_LENGTH + 1)])
-    def test_rejects_wrong_length(self, value: str) -> None:
-        with pytest.raises(InvalidUsernameError):
-            Username(value)
+    def test_rejects_wrong_length_and_characters(self) -> None:
+        values = ["ab", "a" * (USERNAME_MAX_LENGTH + 1), "john@doe", "john doe", "джон", "john!"]
+        values.append("\N{KELVIN SIGN}elvin")  # lowercases to the ASCII "kelvin"
 
-    @pytest.mark.parametrize("value", ["john@doe", "john doe", "джон", "john!"])
-    def test_rejects_forbidden_characters(self, value: str) -> None:
-        with pytest.raises(InvalidUsernameError):
-            Username(value)
-
-    def test_rejects_non_ascii_that_lowercases_to_ascii(self) -> None:
-        with pytest.raises(InvalidUsernameError):
-            Username("\N{KELVIN SIGN}elvin")  # lowercases to "kelvin"
+        assert not_rejected((Username, value, InvalidUsernameError) for value in values) == []
 
 
-class TestRawPassword:
-    @pytest.mark.parametrize(
-        "value", ["a" * (PASSWORD_MIN_LENGTH - 1), "a" * (PASSWORD_MAX_LENGTH + 1)]
-    )
-    def test_rejects_wrong_length(self, value: str) -> None:
-        with pytest.raises(InvalidPasswordError):
-            RawPassword(value)
+class TestPasswords:
+    def test_reject_values_out_of_their_rules(self) -> None:
+        cases: list[Rejection] = [
+            (RawPassword, "a" * (PASSWORD_MIN_LENGTH - 1), InvalidPasswordError),
+            (RawPassword, "a" * (PASSWORD_MAX_LENGTH + 1), InvalidPasswordError),
+            (RawPassword, " " * PASSWORD_MIN_LENGTH, InvalidPasswordError),
+            (PasswordHash, "", InvalidPasswordHashError),
+            (PasswordHash, "   ", InvalidPasswordHashError),
+        ]
 
-    def test_rejects_whitespace_only(self) -> None:
-        with pytest.raises(InvalidPasswordError):
-            RawPassword(" " * PASSWORD_MIN_LENGTH)
+        assert not_rejected(cases) == []
 
-    def test_keeps_surrounding_whitespace(self) -> None:
+    def test_raw_password_is_kept_as_is_but_hidden_from_repr(self) -> None:
         assert RawPassword(" secret password ").value == " secret password "
-
-    def test_is_hidden_from_repr(self) -> None:
         assert "hunter22" not in repr(RawPassword("hunter2222"))
-
-
-class TestPasswordHash:
-    @pytest.mark.parametrize("value", ["", "   "])
-    def test_rejects_empty(self, value: str) -> None:
-        with pytest.raises(InvalidPasswordHashError):
-            PasswordHash(value)
-
-    def test_is_hidden_from_repr(self) -> None:
         assert "secret-hash" not in repr(PasswordHash("secret-hash"))
 
 
@@ -93,25 +73,18 @@ class TestUser:
         assert user.password_hash == PasswordHash("new-hash")
 
 
-class TestEntityIdentity:
-    def test_equal_by_id_regardless_of_attributes(self) -> None:
-        user = make_user()
-        changed = User(
-            id=user.id,
-            username=Username("other"),
-            password_hash=PasswordHash("other"),
-            is_active=False,
-        )
+def test_entities_are_equal_by_id_only() -> None:
+    user = make_user()
+    changed = User(
+        id=user.id,
+        username=Username("other"),
+        password_hash=PasswordHash("other"),
+        is_active=False,
+    )
 
-        assert user == changed
-        assert hash(user) == hash(changed)
-        assert len({user, changed}) == 1
-
-    def test_different_ids_are_different_entities(self) -> None:
-        assert make_user() != make_user()
-
-    def test_not_equal_to_other_types(self) -> None:
-        user = make_user()
-
-        assert user != user.id
-        assert user != object()
+    assert user == changed
+    assert hash(user) == hash(changed)
+    assert len({user, changed}) == 1
+    assert user != make_user()
+    assert user != user.id
+    assert user != object()

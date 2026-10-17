@@ -11,6 +11,7 @@ import pkgutil
 from collections.abc import AsyncIterator
 from datetime import timedelta
 from pathlib import Path
+from typing import Any
 
 import jwt
 import pytest
@@ -115,32 +116,26 @@ class TestGraph:
         with pytest.raises(GraphMissingFactoryError, match="AbstractPasswordHasher"):
             make_async_container(*without_security, context={Settings: settings})
 
-    def test_use_cases_are_discovered(self) -> None:
-        assert len(_use_cases()) >= 10, "the discovery below must not pass vacuously"
-
-    @pytest.mark.parametrize("use_case", _use_cases(), ids=lambda cls: cls.__qualname__)
-    async def test_every_use_case_is_provided(
-        self, container: AsyncContainer, use_case: type
-    ) -> None:
+    async def test_every_use_case_and_service_is_provided(self, container: AsyncContainer) -> None:
         """A new use case class that nobody registered in ioc/ fails here."""
-        async with container() as request:
-            assert isinstance(await request.get(use_case), use_case)
-
-    @pytest.mark.parametrize(
-        "service",
-        [
+        use_cases = _use_cases()
+        assert len(use_cases) >= 10, "the discovery must not pass vacuously"
+        services = [
             CredentialsVerifier,
             TokenPairIssuer,
             IdempotentExecutor,
             CheckReadiness,
             MovingReminderScheduler,
-        ],
-    )
-    async def test_application_services_are_provided(
-        self, container: AsyncContainer, service: type
-    ) -> None:
+        ]
+
         async with container() as request:
-            assert isinstance(await request.get(service), service)
+            missing = [
+                cls.__qualname__
+                for cls in [*use_cases, *services]
+                if not isinstance(await request.get(cls), cls)
+            ]
+
+        assert missing == []
 
 
 class TestScopes:
@@ -169,9 +164,11 @@ class TestScopes:
         for one, other in zip(first_objects, second_objects, strict=True):
             assert one is not other
 
-    @pytest.mark.parametrize(
-        "dependency",
-        [
+    async def test_process_wide_objects_are_shared_by_all_requests(
+        self, container: AsyncContainer
+    ) -> None:
+        """One engine and one Redis pool per process; a hasher keeps its dummy hash."""
+        shared: list[Any] = [
             AsyncEngine,
             async_sessionmaker[AsyncSession],
             Redis,
@@ -181,18 +178,15 @@ class TestScopes:
             AbstractRateLimiter,
             AbstractIdempotencyStore,
             CheckReadiness,
-        ],
-    )
-    async def test_process_wide_objects_are_shared_by_all_requests(
-        self, container: AsyncContainer, dependency: object
-    ) -> None:
-        """One engine and one Redis pool per process; a hasher keeps its dummy hash."""
+        ]
         async with container() as first:
-            one = await first.get(dependency)
+            ones = [await first.get(dependency) for dependency in shared]
         async with container() as second:
-            other = await second.get(dependency)
+            others = [await second.get(dependency) for dependency in shared]
 
-        assert one is other
+        assert [one is other for one, other in zip(ones, others, strict=True)] == [True] * len(
+            shared
+        )
 
 
 class TestSettingsReachTheAdapters:

@@ -21,6 +21,7 @@ dependencies = [
     "structlog==26.1.0",
     "taskiq==0.13.0",
     "taskiq-redis==1.2.4",
+    "tzdata==2026.5",
     "uvicorn[standard]==0.54.0",
 ]
 

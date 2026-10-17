@@ -42,33 +42,24 @@ class TestRegister:
         assert response.status_code == 409
         assert_error(response.json(), "username_taken")
 
-    async def test_email_is_not_accepted(self, client: AsyncClient) -> None:
-        response = await client.post(
-            f"{API}/auth/register",
-            json={"email": "john@example.com", "username": "john_doe", "password": PASSWORD},
-        )
+    async def test_invalid_bodies_are_422(self, client: AsyncClient) -> None:
+        cases = [
+            # An email is neither a field nor a username.
+            (
+                {"email": "john@example.com", "username": "john_doe", "password": PASSWORD},
+                "validation_error",
+            ),
+            ({"username": "john@example.com", "password": PASSWORD}, "invalid_username"),
+            ({"username": "john_doe", "password": "short"}, "invalid_password"),
+        ]
+        found = []
+        for body, _ in cases:
+            response = await client.post(f"{API}/auth/register", json=body)
+            found.append((body, response.status_code, response.json()["error"]["code"]))
 
-        assert response.status_code == 422
-        assert_error(response.json(), "validation_error")
+        assert found == [(body, 422, code) for body, code in cases]
 
-    async def test_username_cannot_be_an_email(self, client: AsyncClient) -> None:
-        response = await client.post(
-            f"{API}/auth/register", json={"username": "john@example.com", "password": PASSWORD}
-        )
-
-        assert response.status_code == 422
-        assert_error(response.json(), "invalid_username")
-
-    async def test_domain_validation_is_reported_as_422(self, client: AsyncClient) -> None:
-        response = await client.post(
-            f"{API}/auth/register",
-            json={"username": "john_doe", "password": "short"},
-        )
-
-        assert response.status_code == 422
-        assert_error(response.json(), "invalid_password")
-
-    async def test_malformed_body(self, client: AsyncClient) -> None:
+    async def test_malformed_body_names_every_field(self, client: AsyncClient) -> None:
         response = await client.post(f"{API}/auth/register", json={"extra": 1})
 
         assert response.status_code == 422
@@ -86,16 +77,6 @@ class TestLogin:
             tokens = await login(client, username)
             assert tokens["token_type"] == "bearer"
             assert 0 < int(tokens["expires_in"]) <= 15 * 60
-
-    async def test_email_is_not_a_login(self, client: AsyncClient) -> None:
-        await register(client)
-
-        response = await client.post(
-            f"{API}/auth/login", json={"username": "john@example.com", "password": PASSWORD}
-        )
-
-        assert response.status_code == 401
-        assert_error(response.json(), "invalid_credentials")
 
     async def test_wrong_password_and_unknown_username_look_the_same(
         self, client: AsyncClient

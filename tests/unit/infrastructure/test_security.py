@@ -26,7 +26,7 @@ def tokens() -> JwtAccessTokenService:
 
 
 class TestArgon2:
-    async def test_hash_verifies_only_the_right_password(
+    async def test_salted_hash_verifies_only_the_right_password(
         self, hasher: Argon2PasswordHasher
     ) -> None:
         password_hash = await hasher.hash(RawPassword("correct horse"))
@@ -34,18 +34,16 @@ class TestArgon2:
         assert password_hash.value.startswith("$argon2id$")
         assert await hasher.verify("correct horse", password_hash)
         assert not await hasher.verify("wrong horse", password_hash)
+        assert await hasher.hash(RawPassword("correct horse")) != password_hash
 
-    async def test_salted(self, hasher: Argon2PasswordHasher) -> None:
-        first = await hasher.hash(RawPassword("correct horse"))
-        second = await hasher.hash(RawPassword("correct horse"))
+    async def test_malformed_hash_is_a_mismatch_without_rehash(
+        self, hasher: Argon2PasswordHasher
+    ) -> None:
+        malformed = PasswordHash("not-an-argon2-hash")
 
-        assert first != second
-
-    async def test_malformed_hash_is_a_mismatch(self, hasher: Argon2PasswordHasher) -> None:
-        assert not await hasher.verify("anything", PasswordHash("not-an-argon2-hash"))
-
-    async def test_dummy_verify_does_not_raise(self, hasher: Argon2PasswordHasher) -> None:
-        await hasher.dummy_verify("anything")
+        assert not await hasher.verify("anything", malformed)
+        assert not hasher.needs_rehash(malformed)
+        await hasher.dummy_verify("anything")  # does not raise either
 
     async def test_needs_rehash_only_after_the_parameters_change(
         self, hasher: Argon2PasswordHasher
@@ -61,9 +59,6 @@ class TestArgon2:
         assert not stronger.needs_rehash(new_hash)
         assert await stronger.verify("short", new_hash)
 
-    def test_malformed_hash_needs_no_rehash(self, hasher: Argon2PasswordHasher) -> None:
-        assert not hasher.needs_rehash(PasswordHash("not-an-argon2-hash"))
-
 
 class TestJwtAccessTokens:
     def test_roundtrip(self, tokens: JwtAccessTokenService) -> None:
@@ -78,29 +73,21 @@ class TestJwtAccessTokens:
 
         assert expired.read_user_id(expired.issue(USER_ID).token) is None
 
-    @pytest.mark.parametrize(
-        "claims",
-        [
+    def test_rejects_foreign_claims(self, tokens: JwtAccessTokenService) -> None:
+        payload = jwt.decode(
+            tokens.issue(USER_ID).token,
+            SECRET,
+            algorithms=["HS256"],
+            options={"verify_signature": False},
+        )
+        foreign = [
             {"type": "refresh"},  # another kind of token signed with the same key
             {"iss": "someone-else"},
             {"sub": "not-a-uuid"},
-        ],
-    )
-    def test_rejects_foreign_claims(
-        self, tokens: JwtAccessTokenService, claims: dict[str, str]
-    ) -> None:
-        payload = (
-            jwt.decode(
-                tokens.issue(USER_ID).token,
-                SECRET,
-                algorithms=["HS256"],
-                options={"verify_signature": False},
-            )
-            | claims
-        )
-        forged = jwt.encode(payload, SECRET, algorithm="HS256")
+        ]
+        forged = [jwt.encode(payload | claims, SECRET, algorithm="HS256") for claims in foreign]
 
-        assert tokens.read_user_id(forged) is None
+        assert [tokens.read_user_id(token) for token in forged] == [None] * len(foreign)
 
     def test_rejects_other_keys_and_the_none_algorithm(self, tokens: JwtAccessTokenService) -> None:
         payload = jwt.decode(tokens.issue(USER_ID).token, options={"verify_signature": False})

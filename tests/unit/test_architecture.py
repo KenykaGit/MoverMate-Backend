@@ -16,8 +16,6 @@ import pkgutil
 import sys
 from pathlib import Path
 
-import pytest
-
 import app
 from app.domain.common.entity import Entity
 
@@ -285,39 +283,44 @@ def test_entities_are_slotted_keyword_only_dataclasses_with_identity_equality() 
         assert cls.__hash__ is Entity.__hash__, cls
 
 
-@pytest.mark.parametrize(
-    ("rel_path", "source", "expected"),
-    [
-        ("domain/tokens/entity.py", "import sqlalchemy", "sqlalchemy may only be imported"),
-        ("domain/tokens/entity.py", "import structlog", "standard library only"),
-        ("domain/tokens/entity.py", "from app.domain.users.entity import User", "must not import"),
-        ("domain/tokens/entity.py", "from app.application.exceptions import X", "must not import"),
-        ("domain/common/ids.py", "from app.domain.users import x", "must not import"),
-        ("application/users/get_user.py", "from app.application.auth import x", "must not"),
-        ("application/users/get_user.py", "from app.infrastructure.db import x", "must not"),
-        ("application/users/get_user.py", "from pydantic import BaseModel", "may only be"),
-        ("application/common/clock.py", "from app.application.users import dto", "must not"),
-        (
-            "application/users/do_things.py",
-            "class DoThings:\n    def __call__(self) -> None: ...",
-            "must define `async def __call__`",
-        ),
-        (
-            "application/auth/services.py",
-            "async def issue(uow):\n    await uow.commit()",
-            "must not commit",
-        ),
-        ("presentation/http/routes/x.py", "from sqlalchemy import select", "may only be"),
-        ("presentation/http/routes/x.py", "import argon2", "may only be"),
-        ("infrastructure/redis/rate_limit.py", "from sqlalchemy import select", "may only be"),
-        ("infrastructure/db/repositories/x.py", "import redis", "may only be"),
-        ("infrastructure/db/repositories/x.py", "class Foo(Base): pass", "ORM models must"),
-        ("ioc/container.py", "import fastapi", "fastapi may only be"),
-    ],
-)
-def test_checker_detects_violations(rel_path: str, source: str, expected: str) -> None:
-    found = violations(rel_path, source)
-    assert any(expected in problem for problem in found), found
+# (file, source, expected problem): the rules must fire on real violations.
+VIOLATIONS = [
+    ("domain/tokens/entity.py", "import sqlalchemy", "sqlalchemy may only be imported"),
+    ("domain/tokens/entity.py", "import structlog", "standard library only"),
+    ("domain/tokens/entity.py", "from app.domain.users.entity import User", "must not import"),
+    ("domain/tokens/entity.py", "from app.application.exceptions import X", "must not import"),
+    ("domain/common/ids.py", "from app.domain.users import x", "must not import"),
+    ("application/users/get_user.py", "from app.application.auth import x", "must not"),
+    ("application/users/get_user.py", "from app.infrastructure.db import x", "must not"),
+    ("application/users/get_user.py", "from pydantic import BaseModel", "may only be"),
+    ("application/common/clock.py", "from app.application.users import dto", "must not"),
+    (
+        "application/users/do_things.py",
+        "class DoThings:\n    def __call__(self) -> None: ...",
+        "must define `async def __call__`",
+    ),
+    (
+        "application/auth/services.py",
+        "async def issue(uow):\n    await uow.commit()",
+        "must not commit",
+    ),
+    ("presentation/http/routes/x.py", "from sqlalchemy import select", "may only be"),
+    ("presentation/http/routes/x.py", "import argon2", "may only be"),
+    ("infrastructure/redis/rate_limit.py", "from sqlalchemy import select", "may only be"),
+    ("infrastructure/db/repositories/x.py", "import redis", "may only be"),
+    ("infrastructure/db/repositories/x.py", "class Foo(Base): pass", "ORM models must"),
+    ("ioc/container.py", "import fastapi", "fastapi may only be"),
+]
+
+
+def test_checker_detects_violations() -> None:
+    missed = [
+        (rel_path, source)
+        for rel_path, source, expected in VIOLATIONS
+        if not any(expected in problem for problem in violations(rel_path, source))
+    ]
+
+    assert missed == []
 
 
 def test_checker_accepts_allowed_imports() -> None:

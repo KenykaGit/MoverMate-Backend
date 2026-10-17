@@ -6,7 +6,6 @@ use cases gets its own tests as they are implemented.
 
 from typing import Any
 
-import pytest
 from httpx import AsyncClient
 
 from app.domain.common.ids import new_id
@@ -45,22 +44,13 @@ OPERATIONS: list[tuple[str, str, dict[str, Any] | None, dict[str, Any] | None]] 
 ]
 
 
-@pytest.mark.parametrize(
-    ("method", "path", "body", "query"),
-    OPERATIONS,
-    ids=[f"{method} {path.replace(ID, '{id}')}" for method, path, _, _ in OPERATIONS],
-)
-async def test_requires_a_user(
-    client: AsyncClient,
-    method: str,
-    path: str,
-    body: dict[str, Any] | None,
-    query: dict[str, Any] | None,
-) -> None:
-    response = await client.request(method, f"{API}{path}", json=body, params=query)
+async def test_every_operation_requires_a_user(client: AsyncClient) -> None:
+    answered = []
+    for method, path, body, query in OPERATIONS:
+        response = await client.request(method, f"{API}{path}", json=body, params=query)
+        answered.append((method, path, response.status_code, response.json()["error"]["code"]))
 
-    assert response.status_code == 401
-    assert response.json()["error"]["code"] == "not_authenticated"
+    assert [a for a in answered if a[2:] != (401, "not_authenticated")] == []
 
 
 async def test_box_by_qr_rejects_an_invalid_token(client: AsyncClient) -> None:
@@ -74,26 +64,26 @@ async def test_box_by_qr_rejects_an_invalid_token(client: AsyncClient) -> None:
     assert response.json()["error"]["code"] == "not_authenticated"
 
 
-@pytest.mark.parametrize(
-    ("method", "path", "body", "field"),
-    [
-        ("POST", f"/projects/{ID}/items/batch", {"source_room_id": ID, "entries": []}, "entries"),
-        ("PATCH", f"/boxes/{ID}", {"is_fragile": None}, "is_fragile"),
-        ("PATCH", f"/boxes/{ID}", {"destination_room_id": None}, "destination_room_id"),
-        ("PATCH", f"/items/{ID}", {"name": None}, "name"),
-        ("PATCH", f"/items/{ID}", {"priority": None}, "priority"),
-        ("PUT", f"/items/{ID}/state", {"state": "MISPLACED"}, "state"),
-        ("PUT", f"/boxes/{ID}/contents-reminder", {"remind_at": "2026-11-01T09:00"}, "remind_at"),
-    ],
-)
-async def test_shape_is_validated_before_the_use_case(
-    client: AsyncClient, method: str, path: str, body: dict[str, Any], field: str
-) -> None:
+# (method, path, body, field): wrong in shape, so rejected before any use case runs.
+SHAPE_ERRORS = [
+    ("POST", f"/projects/{ID}/items/batch", {"source_room_id": ID, "entries": []}, "entries"),
+    ("PATCH", f"/boxes/{ID}", {"is_fragile": None}, "is_fragile"),
+    ("PATCH", f"/boxes/{ID}", {"destination_room_id": None}, "destination_room_id"),
+    ("PATCH", f"/items/{ID}", {"name": None}, "name"),
+    ("PATCH", f"/items/{ID}", {"priority": None}, "priority"),
+    ("PUT", f"/items/{ID}/state", {"state": "MISPLACED"}, "state"),
+    ("PUT", f"/boxes/{ID}/contents-reminder", {"remind_at": "2026-11-01T09:00"}, "remind_at"),
+]
+
+
+async def test_shape_is_validated_before_the_use_case(client: AsyncClient) -> None:
     session = await signed_up(client)
+    wrong = []
+    for method, path, body, field in SHAPE_ERRORS:
+        response = await client.request(method, f"{API}{path}", json=body, headers=session.headers)
+        error = response.json()["error"]
+        names_field = any(d["field"].startswith(f"body.{field}") for d in error["details"])
+        if (response.status_code, error["code"], names_field) != (422, "validation_error", True):
+            wrong.append((method, path, response.status_code, error["code"]))
 
-    response = await client.request(method, f"{API}{path}", json=body, headers=session.headers)
-
-    assert response.status_code == 422
-    error = response.json()["error"]
-    assert error["code"] == "validation_error"
-    assert any(detail["field"].startswith(f"body.{field}") for detail in error["details"])
+    assert wrong == []

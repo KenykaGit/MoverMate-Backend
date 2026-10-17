@@ -1,18 +1,17 @@
-import pytest
-
 from app.application.common.pagination import MAX_PAGE_SIZE, Page, PageRequest
 from app.application.exceptions import InvalidPaginationError
+from tests.checks import not_rejected
 
 
-@pytest.mark.parametrize(("limit", "offset"), [(1, 0), (MAX_PAGE_SIZE, 10_000)])
-def test_accepts_bounds(limit: int, offset: int) -> None:
-    assert PageRequest(limit=limit, offset=offset).limit == limit
+def test_limit_and_offset_bounds() -> None:
+    bounds = [(1, 0), (MAX_PAGE_SIZE, 10_000)]
+    outside = [(0, 0), (MAX_PAGE_SIZE + 1, 0), (10, -1)]
 
+    def request(page: tuple[int, int]) -> PageRequest:
+        return PageRequest(limit=page[0], offset=page[1])
 
-@pytest.mark.parametrize(("limit", "offset"), [(0, 0), (MAX_PAGE_SIZE + 1, 0), (10, -1)])
-def test_rejects_out_of_range(limit: int, offset: int) -> None:
-    with pytest.raises(InvalidPaginationError):
-        PageRequest(limit=limit, offset=offset)
+    assert [(r.limit, r.offset) for r in map(request, bounds)] == bounds
+    assert not_rejected((request, page, InvalidPaginationError) for page in outside) == []
 
 
 def test_page_echoes_the_request() -> None:

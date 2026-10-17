@@ -35,7 +35,6 @@ def login(
     return Login(credentials_verifier, token_pair_issuer, uow)
 
 
-@pytest.mark.parametrize("username", ["john_doe", "John_Doe", "  JOHN_DOE "])
 async def test_issues_token_pair_by_username(
     login: Login,
     access_tokens: FakeAccessTokenService,
@@ -43,16 +42,16 @@ async def test_issues_token_pair_by_username(
     refresh_token_generator: FakeRefreshTokenGenerator,
     uow: FakeUnitOfWork,
     user: User,
-    username: str,
 ) -> None:
-    tokens = await login(LoginDTO(username=username, password=PASSWORD))
+    usernames = ["john_doe", "John_Doe", "  JOHN_DOE "]  # normalized like at registration
+    issued = [await login(LoginDTO(username=name, password=PASSWORD)) for name in usernames]
 
-    assert access_tokens.read_user_id(tokens.access_token) == user.id
-    [stored] = refresh_tokens.active_for(user.id)
+    assert [access_tokens.read_user_id(t.access_token) for t in issued] == [user.id] * 3
+    stored = {token.token_hash for token in refresh_tokens.active_for(user.id)}
     # Only the hash of the refresh token is stored.
-    assert stored.token_hash == refresh_token_generator.hash(tokens.refresh_token)
-    assert stored.token_hash != tokens.refresh_token
-    assert uow.commits == 1
+    assert stored == {refresh_token_generator.hash(t.refresh_token) for t in issued}
+    assert stored.isdisjoint(t.refresh_token for t in issued)
+    assert uow.commits == 3
 
 
 async def test_each_login_is_a_separate_session(
@@ -138,22 +137,16 @@ async def test_wrong_password(
     assert uow.commits == 0
 
 
-@pytest.mark.parametrize("username", ["nobody", "@@", "x"])
-async def test_unknown_username_costs_as_much_as_a_wrong_password(
-    login: Login, hasher: FakePasswordHasher, username: str
-) -> None:
-    with pytest.raises(InvalidCredentialsError):
-        await login(LoginDTO(username=username, password=PASSWORD))
-
-    assert hasher.dummy_verify_calls == 1
-
-
 @pytest.mark.usefixtures("user")
-async def test_email_is_not_a_login(login: Login, hasher: FakePasswordHasher) -> None:
-    with pytest.raises(InvalidCredentialsError):
-        await login(LoginDTO(username="john@example.com", password=PASSWORD))
+async def test_unknown_username_costs_as_much_as_a_wrong_password(
+    login: Login, hasher: FakePasswordHasher
+) -> None:
+    usernames = ["nobody", "@@", "x", "john@example.com"]  # an email is not a login
+    for username in usernames:
+        with pytest.raises(InvalidCredentialsError):
+            await login(LoginDTO(username=username, password=PASSWORD))
 
-    assert hasher.dummy_verify_calls == 1
+    assert hasher.dummy_verify_calls == len(usernames)
 
 
 async def test_deleted_user_cannot_log_in(

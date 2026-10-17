@@ -222,9 +222,13 @@ async def test_failures_are_retried_with_a_delay_then_given_up(
     assert notifications.get(notification).status is NotificationStatus.FAILED
 
 
-@pytest.mark.parametrize(
-    ("target", "facts"),
-    [
+async def test_cancelled_when_the_reason_is_gone(
+    deliver: DeliverNextNotification,
+    notifications: InMemoryNotificationRepository,
+    contexts: FakeNotificationContextReader,
+    sender: FakePushSender,
+) -> None:
+    cases: list[tuple[NotificationTarget, dict[str, object]]] = [
         (MovingDateReminder(MovingReminderOffset(1)), {"project_is_active": False}),
         (MovingDateReminder(MovingReminderOffset(1)), {"recipient_is_active": False}),
         (MovingDateReminder(MovingReminderOffset(1)), {"recipient_is_member": False}),
@@ -239,20 +243,16 @@ async def test_failures_are_retried_with_a_delay_then_given_up(
         ),
         (BoxContentsReminder(BoxId(new_id())), {"box": replace(BOX, status="PACKED")}),
         (BoxContentsReminder(BoxId(new_id())), {"box": replace(BOX, is_active=False)}),
-    ],
-)
-async def test_cancelled_when_the_reason_is_gone(
-    deliver: DeliverNextNotification,
-    notifications: InMemoryNotificationRepository,
-    contexts: FakeNotificationContextReader,
-    sender: FakePushSender,
-    target: NotificationTarget,
-    facts: dict[str, object],
-) -> None:
-    contexts.context = replace(CONTEXT, **facts)  # type: ignore[arg-type]
-    notification = due(target)
-    await notifications.add(notification)
+    ]
+    wrong = []
+    for target, facts in cases:
+        contexts.context = replace(CONTEXT, **facts)  # type: ignore[arg-type]
+        notification = due(target)
+        await notifications.add(notification)
+        outcome = await deliver()
+        status = notifications.get(notification).status
+        if (outcome, status) != (DeliveryOutcome.CANCELLED, NotificationStatus.CANCELLED):
+            wrong.append((target, facts, outcome, status))
 
-    assert await deliver() is DeliveryOutcome.CANCELLED
-    assert notifications.get(notification).status is NotificationStatus.CANCELLED
+    assert wrong == []
     assert sender.sent == []

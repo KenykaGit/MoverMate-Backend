@@ -132,53 +132,55 @@ def _with(insert_row: Callable[..., Awaitable[Any]], **values: Any) -> Insert:
     return lambda connection, project: insert_row(connection, project, **values)
 
 
-@pytest.mark.parametrize(
-    ("insert_row", "constraint"),
-    [
-        (_with(insert_room, kind="HALLWAY"), "ck_rooms_kind"),
-        (_with(insert_box, number=0), "ck_boxes_number_positive"),
-        (_with(insert_box, qr_token="short"), "ck_boxes_qr_token_length"),
-        (_with(insert_box, status="LOST"), "ck_boxes_status"),
-        (_with(insert_item, state="IN_BOX"), "ck_items_box_id_iff_in_box"),
-        (_with(insert_item, quantity=0), "ck_items_quantity_range"),
-        (_with(insert_item, priority=4), "ck_items_priority_range"),
-        (_with(insert_item, state="BROKEN"), "ck_items_state"),
-        (_with(insert_task, is_done=True), "ck_tasks_done_at_iff_done"),
-        (_with(insert_task, done_at=NOW), "ck_tasks_done_at_iff_done"),
-        (_with(insert_task, phase="SOMETIME"), "ck_tasks_phase"),
-        (
-            _with(insert_notification, type="TASK_REMINDER"),
-            "ck_notifications_offset_iff_task_reminder",
-        ),
-        (
-            _with(insert_notification, reminder_offset_hours=24),
-            "ck_notifications_offset_iff_task_reminder",
-        ),
-        (
-            _with(insert_notification, type="BOX_CONTENTS_REMINDER"),
-            "ck_notifications_target_matches_type",
-        ),
-        (
-            # A moving date reminder is about the project: no task, no box.
-            _with(insert_notification, type="MOVING_DATE_REMINDER", reminder_offset_days=7),
-            "ck_notifications_target_matches_type",
-        ),
-        (
-            _with(insert_notification, type="MOVING_DATE_REMINDER", task_id=None),
-            "ck_notifications_offset_days_iff_moving_date_reminder",
-        ),
-        (
-            _with(insert_notification, reminder_offset_days=7),
-            "ck_notifications_offset_days_iff_moving_date_reminder",
-        ),
-        (_with(insert_notification, status="LATE"), "ck_notifications_status"),
-        (_with(insert_notification, attempts=-1), "ck_notifications_attempts_non_negative"),
-    ],
-)
-async def test_check_constraints(
-    connection: AsyncConnection, project: str, insert_row: Insert, constraint: str
-) -> None:
-    assert await violation(insert_row(connection, project), connection) == constraint
+# (insert, constraint it must violate): one column off its rule at a time.
+CHECKS: list[tuple[Insert, str]] = [
+    (_with(insert_room, kind="HALLWAY"), "ck_rooms_kind"),
+    (_with(insert_box, number=0), "ck_boxes_number_positive"),
+    (_with(insert_box, qr_token="short"), "ck_boxes_qr_token_length"),
+    (_with(insert_box, status="LOST"), "ck_boxes_status"),
+    (_with(insert_item, state="IN_BOX"), "ck_items_box_id_iff_in_box"),
+    (_with(insert_item, quantity=0), "ck_items_quantity_range"),
+    (_with(insert_item, priority=4), "ck_items_priority_range"),
+    (_with(insert_item, state="BROKEN"), "ck_items_state"),
+    (_with(insert_task, is_done=True), "ck_tasks_done_at_iff_done"),
+    (_with(insert_task, done_at=NOW), "ck_tasks_done_at_iff_done"),
+    (_with(insert_task, phase="SOMETIME"), "ck_tasks_phase"),
+    (
+        _with(insert_notification, type="TASK_REMINDER"),
+        "ck_notifications_offset_iff_task_reminder",
+    ),
+    (
+        _with(insert_notification, reminder_offset_hours=24),
+        "ck_notifications_offset_iff_task_reminder",
+    ),
+    (
+        _with(insert_notification, type="BOX_CONTENTS_REMINDER"),
+        "ck_notifications_target_matches_type",
+    ),
+    (
+        # A moving date reminder is about the project: no task, no box.
+        _with(insert_notification, type="MOVING_DATE_REMINDER", reminder_offset_days=7),
+        "ck_notifications_target_matches_type",
+    ),
+    (
+        _with(insert_notification, type="MOVING_DATE_REMINDER", task_id=None),
+        "ck_notifications_offset_days_iff_moving_date_reminder",
+    ),
+    (
+        _with(insert_notification, reminder_offset_days=7),
+        "ck_notifications_offset_days_iff_moving_date_reminder",
+    ),
+    (_with(insert_notification, status="LATE"), "ck_notifications_status"),
+    (_with(insert_notification, attempts=-1), "ck_notifications_attempts_non_negative"),
+]
+
+
+async def test_check_constraints(connection: AsyncConnection, project: str) -> None:
+    found = [
+        (await violation(insert_row(connection, project), connection)) for insert_row, _ in CHECKS
+    ]
+
+    assert found == [constraint for _, constraint in CHECKS]
 
 
 async def test_project_qr_code_strategy(connection: AsyncConnection) -> None:
@@ -187,33 +189,25 @@ async def test_project_qr_code_strategy(connection: AsyncConnection) -> None:
     assert found == "ck_projects_qr_code_strategy"
 
 
-async def test_reminder_offset_range(connection: AsyncConnection, project: str) -> None:
+async def test_reminder_offset_ranges(connection: AsyncConnection, project: str) -> None:
     task = await insert_task(connection, project)
+    out_of_range = "ck_project_reminders_offset_days_range"
+    # 0: the morning of the moving day itself (migration 0006).
+    cases = [(-1, out_of_range), (0, None), (365, None), (366, out_of_range)]
 
-    found = await violation(
+    task_reminder = await violation(
         insert(connection, "task_reminders", {"task_id": task, "offset_hours": 0}), connection
     )
+    moving_reminders = [
+        await violation(
+            insert(connection, "project_reminders", {"project_id": project, "offset_days": days}),
+            connection,
+        )
+        for days, _ in cases
+    ]
 
-    assert found == "ck_task_reminders_offset_hours_range"
-
-
-@pytest.mark.parametrize(
-    ("offset_days", "constraint"),
-    [
-        (-1, "ck_project_reminders_offset_days_range"),
-        (0, None),  # the morning of the moving day itself (migration 0006)
-        (365, None),
-        (366, "ck_project_reminders_offset_days_range"),
-    ],
-)
-async def test_moving_reminder_offset_range(
-    connection: AsyncConnection, project: str, offset_days: int, constraint: str | None
-) -> None:
-    values = {"project_id": project, "offset_days": offset_days}
-
-    found = await violation(insert(connection, "project_reminders", values), connection)
-
-    assert found == constraint
+    assert task_reminder == "ck_task_reminders_offset_hours_range"
+    assert moving_reminders == [constraint for _, constraint in cases]
 
 
 async def test_audit_entity_type_follows_the_action(
@@ -234,41 +228,25 @@ async def test_audit_entity_type_follows_the_action(
     assert found == "ck_audit_logs_entity_type_of_action"
 
 
-class TestObjectsStayInTheirProject:
-    async def test_item_cannot_use_a_room_of_another_project(
-        self, connection: AsyncConnection, project: str
-    ) -> None:
-        foreign_room = await insert_room(connection, await insert_project(connection))
+async def test_objects_stay_in_their_project(connection: AsyncConnection, project: str) -> None:
+    other = await insert_project(connection)
+    source_room = await insert_room(connection, other)
+    destination_room = await insert_room(connection, other, kind="DESTINATION")
+    box = await insert_box(connection, other)
 
-        found = await violation(
-            insert_item(connection, project, source_room_id=foreign_room), connection
-        )
+    found = [
+        await violation(insert_item(connection, project, source_room_id=source_room), connection),
+        await violation(insert_item(connection, project, state="IN_BOX", box_id=box), connection),
+        await violation(
+            insert_box(connection, project, destination_room_id=destination_room), connection
+        ),
+    ]
 
-        assert found == "fk_items_source_room_id_rooms"
-
-    async def test_item_cannot_go_into_a_box_of_another_project(
-        self, connection: AsyncConnection, project: str
-    ) -> None:
-        foreign_box = await insert_box(connection, await insert_project(connection))
-
-        found = await violation(
-            insert_item(connection, project, state="IN_BOX", box_id=foreign_box), connection
-        )
-
-        assert found == "fk_items_box_id_boxes"
-
-    async def test_box_cannot_go_to_a_room_of_another_project(
-        self, connection: AsyncConnection, project: str
-    ) -> None:
-        foreign_room = await insert_room(
-            connection, await insert_project(connection), kind="DESTINATION"
-        )
-
-        found = await violation(
-            insert_box(connection, project, destination_room_id=foreign_room), connection
-        )
-
-        assert found == "fk_boxes_destination_room_id_rooms"
+    assert found == [
+        "fk_items_source_room_id_rooms",
+        "fk_items_box_id_boxes",
+        "fk_boxes_destination_room_id_rooms",
+    ]
 
 
 class TestAssignees:

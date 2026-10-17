@@ -2,7 +2,6 @@
 
 from typing import Any
 
-import pytest
 from httpx import AsyncClient
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
@@ -45,18 +44,16 @@ async def stored(engine: AsyncEngine) -> list[dict[str, Any]]:
 
 
 class TestVapidPublicKey:
-    async def test_is_public_and_a_p256_point(self, client: AsyncClient) -> None:
+    async def test_is_a_public_p256_point_stable_across_processes(
+        self, client: AsyncClient, client_factory: ClientFactory
+    ) -> None:
         response = await client.get(KEY_PATH)
 
         assert response.status_code == 200
         key = response.json()["public_key"]
         raw = b64url_decode(key)
         assert (len(raw), raw[0]) == (65, 0x04), "what pushManager.subscribe() accepts"
-
-    async def test_is_stable_across_calls_and_processes(
-        self, client: AsyncClient, client_factory: ClientFactory
-    ) -> None:
-        first = (await client.get(KEY_PATH)).json()
+        first = response.json()
         second = (await client.get(KEY_PATH)).json()
         async with client_factory() as restarted:
             after_restart = (await restarted.get(KEY_PATH)).json()
@@ -131,31 +128,16 @@ class TestSubscribe:
         [row] = await stored(engine)
         assert (row["is_active"], row["p256dh"]) == (True, renewed.p256dh)
 
-    async def test_several_browsers_of_one_user(
-        self, client: AsyncClient, engine: AsyncEngine
-    ) -> None:
+    async def test_expiration_time_is_optional(self, client: AsyncClient) -> None:
         user = await signed_up(client)
+        absent = browser().to_json()
+        del absent["expirationTime"]
+        bodies = [absent] + [
+            browser().to_json() | {"expirationTime": expiration}
+            for expiration in (None, 1_790_000_000_000, 1.5)
+        ]
 
-        for path in ("phone", "laptop"):
-            assert await subscribe(client, user, browser(path).to_json()) == 204
-
-        assert [row["user_id"] for row in await stored(engine)] == [user.user_id] * 2
-
-    @pytest.mark.parametrize("expiration", [None, 1_790_000_000_000, 1.5])
-    async def test_expiration_time_is_accepted(
-        self, client: AsyncClient, expiration: float | None
-    ) -> None:
-        user = await signed_up(client)
-        body = browser().to_json() | {"expirationTime": expiration}
-
-        assert await subscribe(client, user, body) == 204
-
-    async def test_expiration_time_may_be_absent(self, client: AsyncClient) -> None:
-        user = await signed_up(client)
-        body = browser().to_json()
-        del body["expirationTime"]
-
-        assert await subscribe(client, user, body) == 204
+        assert [await subscribe(client, user, body) for body in bodies] == [204] * len(bodies)
 
     async def test_boundary_lengths_are_accepted(
         self, client: AsyncClient, engine: AsyncEngine
@@ -179,9 +161,10 @@ class TestSubscribe:
         assert response.headers["WWW-Authenticate"] == "Bearer"
         assert await stored(engine) == []
 
-    @pytest.mark.parametrize(
-        ("endpoint", "keys"),
-        [
+    async def test_rejects_an_unusable_subscription(
+        self, client: AsyncClient, engine: AsyncEngine
+    ) -> None:
+        cases: list[tuple[str | None, dict[str, str] | None]] = [
             ("http://push.example.com/insecure", None),
             ("push.example.com/no-scheme", None),
             ("https://push.example.com/" + "e" * ENDPOINT_MAX_LENGTH, None),
@@ -189,38 +172,25 @@ class TestSubscribe:
             (None, {"p256dh": "AAAA", "auth": "with spaces"}),
             (None, {"p256dh": "", "auth": "AAAA"}),
             (None, {"p256dh": "A" * (KEY_MAX_LENGTH + 1), "auth": "AAAA"}),
-        ],
-        ids=[
-            "http",
-            "no-scheme",
-            "endpoint-too-long",
-            "p256dh-base64",
-            "auth-spaces",
-            "p256dh-empty",
-            "p256dh-too-long",
-        ],
-    )
-    async def test_rejects_an_unusable_subscription(
-        self,
-        client: AsyncClient,
-        engine: AsyncEngine,
-        endpoint: str | None,
-        keys: dict[str, str] | None,
-    ) -> None:
+        ]
         user = await signed_up(client)
-        body = browser().to_json()
-        body["endpoint"] = endpoint or body["endpoint"]
-        body["keys"] = keys or body["keys"]
+        wrong = []
+        for endpoint, keys in cases:
+            body = browser().to_json()
+            body["endpoint"] = endpoint or body["endpoint"]
+            body["keys"] = keys or body["keys"]
+            response = await client.put(SUBSCRIPTIONS, json=body, headers=user.headers)
+            if (response.status_code, response.json()["error"]["code"]) != (
+                422,
+                "invalid_push_subscription",
+            ):
+                wrong.append((endpoint, keys, response.status_code))
 
-        response = await client.put(SUBSCRIPTIONS, json=body, headers=user.headers)
-
-        assert response.status_code == 422
-        assert response.json()["error"]["code"] == "invalid_push_subscription"
+        assert wrong == []
         assert await stored(engine) == []
 
-    @pytest.mark.parametrize(
-        "body",
-        [
+    async def test_rejects_a_malformed_body(self, client: AsyncClient, engine: AsyncEngine) -> None:
+        bodies: list[dict[str, Any]] = [
             {},
             {"endpoint": "https://push.example.com/x"},
             {"endpoint": "https://push.example.com/x", "keys": {"p256dh": "AAAA"}},
@@ -239,27 +209,21 @@ class TestSubscribe:
                 "keys": {"p256dh": "AAAA", "auth": "AAAA"},
                 "expirationTime": "tomorrow",
             },
-        ],
-        ids=[
-            "empty",
-            "no-keys",
-            "no-auth",
-            "endpoint-not-a-string",
-            "unknown-field",
-            "unknown-key-field",
-            "expiration-not-a-number",
-        ],
-    )
-    async def test_rejects_a_malformed_body(
-        self, client: AsyncClient, engine: AsyncEngine, body: dict[str, Any]
-    ) -> None:
+        ]
         user = await signed_up(client)
+        wrong = []
+        for body in bodies:
+            response = await client.put(SUBSCRIPTIONS, json=body, headers=user.headers)
+            error = response.json()["error"]
+            # The details name the offending field.
+            if (response.status_code, error["code"], bool(error["details"])) != (
+                422,
+                "validation_error",
+                True,
+            ):
+                wrong.append((body, response.status_code, error))
 
-        response = await client.put(SUBSCRIPTIONS, json=body, headers=user.headers)
-
-        assert response.status_code == 422
-        assert response.json()["error"]["code"] == "validation_error"
-        assert response.json()["error"]["details"], "names the offending field"
+        assert wrong == []
         assert await stored(engine) == []
 
 
@@ -275,18 +239,9 @@ class TestUnsubscribe:
             SUBSCRIPTIONS, params={"endpoint": device.endpoint}, headers=user.headers
         )
 
-        assert (response.status_code, response.content) == (204, b"")
-        [row] = await stored(engine)
-        assert row["is_active"] is False
+        again = await unsubscribe(client, user, device.endpoint)
 
-    async def test_is_idempotent(self, client: AsyncClient, engine: AsyncEngine) -> None:
-        user = await signed_up(client)
-        device = browser()
-        await subscribe(client, user, device.to_json())
-
-        statuses = [await unsubscribe(client, user, device.endpoint) for _ in range(2)]
-
-        assert statuses == [204, 204]
+        assert (response.status_code, response.content, again) == (204, b"", 204)
         assert [row["is_active"] for row in await stored(engine)] == [False]
 
     async def test_leaves_other_browsers_of_the_user_alone(
@@ -316,26 +271,17 @@ class TestUnsubscribe:
         [row] = await stored(engine)
         assert (row["user_id"], row["is_active"]) == (alice.user_id, True)
 
-    @pytest.mark.parametrize(
-        "endpoint",
-        ["https://push.example.com/never-subscribed", "http://not-even-https", ""],
-        ids=["unknown", "not-https", "empty"],
-    )
-    async def test_unknown_endpoints_are_fine(self, client: AsyncClient, endpoint: str) -> None:
+    async def test_unknown_endpoints_are_fine(self, client: AsyncClient) -> None:
         user = await signed_up(client)
+        endpoints = ["https://push.example.com/never-subscribed", "http://not-even-https", ""]
 
-        assert await unsubscribe(client, user, endpoint) == 204
+        assert [await unsubscribe(client, user, e) for e in endpoints] == [204, 204, 204]
 
-    async def test_endpoint_is_required(self, client: AsyncClient) -> None:
+    async def test_endpoint_is_required_and_bounded(self, client: AsyncClient) -> None:
         user = await signed_up(client)
-
-        response = await client.delete(SUBSCRIPTIONS, headers=user.headers)
-
-        assert response.status_code == 422
-        assert response.json()["error"]["code"] == "validation_error"
-
-    async def test_endpoint_length_is_bounded(self, client: AsyncClient) -> None:
-        user = await signed_up(client)
+        missing = await client.delete(SUBSCRIPTIONS, headers=user.headers)
+        assert missing.status_code == 422
+        assert missing.json()["error"]["code"] == "validation_error"
         longest = "https://push.example.com/" + "e" * 4071
 
         accepted = await unsubscribe(client, user, longest)

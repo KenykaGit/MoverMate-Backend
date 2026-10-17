@@ -218,31 +218,27 @@ class TestSent:
         assert payload["url"] == f"/b/{qr_token}"
         assert payload["box_id"] == box_id
 
-    @pytest.mark.parametrize(
-        ("days", "title"),
-        [(0, "Сегодня переезд"), (1, "Завтра переезд"), (3, "До переезда 3 дня")],
-    )
     async def test_moving_date_reminder(
-        self,
-        worker: AsyncContainer,
-        engine: AsyncEngine,
-        move: Move,
-        push_service: FakePushService,
-        days: int,
-        title: str,
+        self, worker: AsyncContainer, engine: AsyncEngine, move: Move, push_service: FakePushService
     ) -> None:
         browser = push_service.browser()
         await subscribe(engine, move.member_id, browser)
-        await notify(
-            engine, move, type="MOVING_DATE_REMINDER", task_id=None, reminder_offset_days=days
-        )
+        for days in (0, 1, 3):
+            await notify(
+                engine, move, type="MOVING_DATE_REMINDER", task_id=None, reminder_offset_days=days
+            )
 
         await drain(worker, limit=10)
 
-        [payload] = push_service.payloads(browser)
-        assert payload["title"] == title
-        assert payload["body"] == "Проект «Переезд в Казань»: проверьте план и коробки"
-        assert payload["url"] == "/dashboard"
+        payloads = push_service.payloads(browser)
+        assert sorted(p["title"] for p in payloads) == [
+            "До переезда 3 дня",
+            "Завтра переезд",
+            "Сегодня переезд",
+        ]
+        assert {(p["body"], p["url"]) for p in payloads} == {
+            ("Проект «Переезд в Казань»: проверьте план и коробки", "/dashboard")
+        }
 
     async def test_every_active_browser_of_the_recipient_gets_it(
         self, worker: AsyncContainer, engine: AsyncEngine, move: Move, push_service: FakePushService
@@ -297,22 +293,15 @@ class TestSkipped:
         assert (row["status"], row["sent_at"]) == ("SKIPPED", None)
         assert push_service.received == []
         assert processed(log_events)[0]["outcome"] == "SKIPPED"
-
-    async def test_with_deactivated_subscriptions_only(
-        self, worker: AsyncContainer, engine: AsyncEngine, move: Move, push_service: FakePushService
-    ) -> None:
-        browser = push_service.browser()
-        await subscribe(engine, move.member_id, browser, is_active=False)
-        notification_id = await notify(engine, move)
-
+        # A deactivated subscription is as good as none.
+        await subscribe(engine, move.member_id, push_service.browser(), is_active=False)
+        again = await notify(engine, move)
         await drain(worker, limit=10)
-
-        assert (await notification(engine, notification_id))["status"] == "SKIPPED"
+        assert (await notification(engine, again))["status"] == "SKIPPED"
         assert push_service.received == []
 
 
 class TestGone:
-    @pytest.mark.parametrize("status", [404, 410])
     async def test_gone_subscription_is_deactivated(
         self,
         worker: AsyncContainer,
@@ -320,21 +309,24 @@ class TestGone:
         move: Move,
         push_service: FakePushService,
         log_events: LogEvents,
-        status: int,
     ) -> None:
-        gone, working = push_service.browser(), push_service.browser()
-        push_service.answer(gone, status)
-        gone_id = await subscribe(engine, move.member_id, gone)
-        working_id = await subscribe(engine, move.member_id, working)
-        notification_id = await notify(engine, move)
+        working_id = await subscribe(engine, move.member_id, push_service.browser())
+        gone_ids, statuses = [], []
+        for status in (404, 410):
+            gone = push_service.browser()
+            push_service.answer(gone, status)
+            gone_ids.append(await subscribe(engine, move.member_id, gone))
+            notification_id = await notify(engine, move)
+            await drain(worker, limit=10)
+            statuses.append((await notification(engine, notification_id))["status"])
 
-        await drain(worker, limit=10)
-
-        assert not await subscription_is_active(engine, gone_id)
+        assert statuses == ["SENT", "SENT"]
+        assert [await subscription_is_active(engine, i) for i in gone_ids] == [False, False]
         assert await subscription_is_active(engine, working_id)
-        assert (await notification(engine, notification_id))["status"] == "SENT"
-        [event] = [e for e in log_events() if e["event"] == "push_subscription_gone"]
-        assert (event["subscription_id"], event["user_id"]) == (gone_id, move.member_id)
+        events = [e for e in log_events() if e["event"] == "push_subscription_gone"]
+        assert [(e["subscription_id"], e["user_id"]) for e in events] == [
+            (gone_id, move.member_id) for gone_id in gone_ids
+        ]
 
     async def test_all_gone_is_skipped_and_never_tried_again(
         self, worker: AsyncContainer, engine: AsyncEngine, move: Move, push_service: FakePushService
@@ -413,55 +405,49 @@ class TestCancelled:
 
         assert (await notification(engine, notification_id))["status"] == "CANCELLED"
 
-    @pytest.mark.parametrize(
-        "task",
-        [
-            {"is_done": True, "done_at": datetime(2026, 7, 1, tzinfo=UTC)},
-            {"is_active": False},
-            {"due_at": None},
-        ],
-        ids=["done", "deleted", "due-time-removed"],
-    )
     async def test_reminded_task_no_longer_needs_it(
-        self,
-        worker: AsyncContainer,
-        engine: AsyncEngine,
-        move: Move,
-        push_service: FakePushService,
-        task: dict[str, Any],
+        self, worker: AsyncContainer, engine: AsyncEngine, move: Move, push_service: FakePushService
     ) -> None:
         await subscribe(engine, move.member_id, push_service.browser())
-        async with engine.begin() as connection:
-            values = {"due_at": datetime(2026, 11, 1, tzinfo=UTC)} | task
-            task_id = await insert_task(connection, move.project_id, **values)
-        notification_id = await notify(
-            engine, move, type="TASK_REMINDER", task_id=task_id, reminder_offset_hours=24
-        )
+        changes: list[dict[str, Any]] = [
+            {"is_done": True, "done_at": datetime(2026, 7, 1, tzinfo=UTC)},  # done
+            {"is_active": False},  # deleted
+            {"due_at": None},  # due time removed
+        ]
+        ids = []
+        for change in changes:
+            async with engine.begin() as connection:
+                values = {"due_at": datetime(2026, 11, 1, tzinfo=UTC)} | change
+                task_id = await insert_task(connection, move.project_id, **values)
+            ids.append(
+                await notify(
+                    engine, move, type="TASK_REMINDER", task_id=task_id, reminder_offset_hours=24
+                )
+            )
 
         await drain(worker, limit=10)
 
-        assert (await notification(engine, notification_id))["status"] == "CANCELLED"
+        assert [(await notification(engine, i))["status"] for i in ids] == ["CANCELLED"] * 3
         assert push_service.received == []
 
-    @pytest.mark.parametrize(
-        "box", [{"status": "PACKED"}, {"status": "DELIVERED"}, {"is_active": False}]
-    )
     async def test_box_already_packed_or_deleted(
-        self,
-        worker: AsyncContainer,
-        engine: AsyncEngine,
-        move: Move,
-        push_service: FakePushService,
-        box: dict[str, Any],
+        self, worker: AsyncContainer, engine: AsyncEngine, move: Move, push_service: FakePushService
     ) -> None:
         await subscribe(engine, move.member_id, push_service.browser())
-        async with engine.begin() as connection:
-            box_id = await insert_box(connection, move.project_id, **box)
-        notification_id = await notify(engine, move, type="BOX_CONTENTS_REMINDER", box_id=box_id)
+        boxes: list[dict[str, Any]] = [
+            {"status": "PACKED"},
+            {"status": "DELIVERED"},
+            {"is_active": False},
+        ]
+        ids = []
+        for box in boxes:
+            async with engine.begin() as connection:
+                box_id = await insert_box(connection, move.project_id, **box)
+            ids.append(await notify(engine, move, type="BOX_CONTENTS_REMINDER", box_id=box_id))
 
         await drain(worker, limit=10)
 
-        assert (await notification(engine, notification_id))["status"] == "CANCELLED"
+        assert [(await notification(engine, i))["status"] for i in ids] == ["CANCELLED"] * 3
         assert push_service.received == []
 
 
@@ -542,28 +528,20 @@ class TestRetry:
 
 
 class TestDrain:
-    async def test_future_notifications_are_left_alone(
+    async def test_future_and_finished_notifications_are_left_alone(
         self, worker: AsyncContainer, engine: AsyncEngine, move: Move, push_service: FakePushService
     ) -> None:
         await subscribe(engine, move.member_id, push_service.browser())
         later = datetime.now(UTC) + timedelta(hours=1)
         notification_id = await notify(engine, move, scheduled_at=later)
+        for status in ("SENT", "FAILED", "CANCELLED", "SKIPPED"):
+            await notify(engine, move, status=status)
 
         count = await drain(worker, limit=10)
 
         assert count == 0
         row = await notification(engine, notification_id)
         assert (row["status"], row["attempts"], row["scheduled_at"]) == ("PENDING", 0, later)
-        assert push_service.received == []
-
-    async def test_finished_notifications_are_left_alone(
-        self, worker: AsyncContainer, engine: AsyncEngine, move: Move, push_service: FakePushService
-    ) -> None:
-        await subscribe(engine, move.member_id, push_service.browser())
-        for status in ("SENT", "FAILED", "CANCELLED", "SKIPPED"):
-            await notify(engine, move, status=status)
-
-        assert await drain(worker, limit=10) == 0
         assert push_service.received == []
 
     async def test_stops_at_the_limit(

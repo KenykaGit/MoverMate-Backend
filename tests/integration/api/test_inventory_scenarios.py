@@ -10,7 +10,6 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.domain.common.ids import new_id
-from app.domain.projects.value_objects import QrCodeStrategy
 from app.infrastructure.db.models import AuditLogModel, NotificationModel
 from tests.integration.helpers import API, Session, add_collaborator, create_project, signed_up
 
@@ -133,15 +132,6 @@ class TestRooms:
         )
         assert recreated.status_code == 201
 
-    async def test_strangers_do_not_see_the_project(self, move: Move) -> None:
-        listing = await move.call("GET", f"/projects/{move.project_id}/rooms", as_=move.stranger)
-        renaming = await move.call(
-            "PATCH", f"/rooms/{move.source_id}", json={"name": "Моя"}, as_=move.stranger
-        )
-
-        assert (listing.status_code, listing.json()["error"]["code"]) == (404, "project_not_found")
-        assert (renaming.status_code, renaming.json()["error"]["code"]) == (404, "room_not_found")
-
 
 class TestBoxes:
     async def test_create_with_items(self, move: Move) -> None:
@@ -202,14 +192,9 @@ class TestBoxes:
         assert rest["next_cursor"] is None
         assert [box["number"] for box in packed["results"]] == [2]
         assert [box["number"] for box in by_number["results"]] == [3]
-
-    async def test_a_malformed_cursor_is_rejected(self, move: Move) -> None:
-        response = await move.call(
-            "GET", f"/projects/{move.project_id}/boxes", params={"after": "not-a-cursor"}
-        )
-
-        assert response.status_code == 422
-        assert response.json()["error"]["code"] == "invalid_pagination"
+        malformed = await move.call("GET", path, params={"after": "not-a-cursor"})
+        assert malformed.status_code == 422
+        assert malformed.json()["error"]["code"] == "invalid_pagination"
 
     async def test_update_is_partial(self, move: Move) -> None:
         box = await move.box(title="Книги")
@@ -293,71 +278,55 @@ class TestContentsReminder:
             statuses = list(await session.scalars(select(NotificationModel.status)))
         assert statuses == ["CANCELLED"]
 
-    @pytest.mark.parametrize(
-        ("status", "remind_in", "code"),
-        [
-            ("PACKED", timedelta(hours=1), "box_not_packing"),
-            ("PACKING", -timedelta(hours=1), "reminder_in_the_past"),
-        ],
-    )
-    async def test_rules(self, move: Move, status: str, remind_in: timedelta, code: str) -> None:
-        box = await move.box()
-        if status != "PACKING":
-            await move.ok("PUT", f"/boxes/{box['id']}/status", json={"status": status})
-
-        response = await move.call(
-            "PUT",
-            f"/boxes/{box['id']}/contents-reminder",
-            json={"remind_at": (datetime.now(UTC) + remind_in).isoformat()},
-        )
-
-        assert response.json()["error"]["code"] == code
-
 
 class TestQr:
-    @pytest.mark.parametrize(
-        ("strategy", "who", "status", "access"),
-        [
-            (QrCodeStrategy.PROTECTED, "anonymous", 401, None),
-            (QrCodeStrategy.PROTECTED, "stranger", 404, None),
-            (QrCodeStrategy.PROTECTED, "member", 200, "WRITE"),
-            (QrCodeStrategy.OPEN, "anonymous", 200, "READ"),
-            (QrCodeStrategy.OPEN, "stranger", 200, "READ"),
-            (QrCodeStrategy.OPEN, "member", 200, "WRITE"),
-        ],
-    )
-    async def test_access_matrix(
-        self,
-        client: AsyncClient,
-        strategy: QrCodeStrategy,
-        who: str,
-        status: int,
-        access: str | None,
-    ) -> None:
-        owner = await signed_up(client, username="owner")
-        stranger = await signed_up(client, username="stranger")
-        project = await create_project(client, owner, qr_code_strategy=strategy.value)
-        project_id = project["id"]
-        room = await client.post(
-            f"{API}/projects/{project_id}/rooms",
-            json={"kind": "DESTINATION", "name": "Зал"},
-            headers=owner.headers,
-        )
-        box = await client.post(
-            f"{API}/projects/{project_id}/boxes",
-            json={"destination_room_id": room.json()["id"]},
-            headers=owner.headers,
-        )
-        headers = {"anonymous": {}, "stranger": stranger.headers, "member": owner.headers}[who]
+    async def test_access_matrix(self, move: Move) -> None:
+        """The project's QR strategy against who scans: a member, a stranger, nobody."""
+        protected = move.project_id
+        opened = (await create_project(move.client, move.owner, qr_code_strategy="OPEN"))["id"]
+        tokens = {}
+        for project_id in (protected, opened):
+            room = await move.ok(
+                "POST",
+                f"/projects/{project_id}/rooms",
+                json={"kind": "DESTINATION", "name": "Зал"},
+                status=201,
+            )
+            box = await move.ok(
+                "POST",
+                f"/projects/{project_id}/boxes",
+                json={"destination_room_id": room["id"]},
+                status=201,
+            )
+            tokens[project_id] = box["qr_token"]
+        headers = {
+            "anonymous": {},
+            "stranger": move.stranger.headers,
+            "member": move.member.headers,
+        }
+        opened_member = await add_collaborator(move.client, opened, move.owner, "member")
+        assert opened_member["user"]["username"] == "member"
+        matrix = [
+            (protected, "anonymous", 401, None),
+            (protected, "stranger", 404, None),
+            (protected, "member", 200, "WRITE"),
+            (opened, "anonymous", 200, "READ"),
+            (opened, "stranger", 200, "READ"),
+            (opened, "member", 200, "WRITE"),
+        ]
 
-        response = await client.get(f"{API}/boxes/by-qr/{box.json()['qr_token']}", headers=headers)
-
-        assert response.status_code == status, response.text
-        if access is not None:
+        found = []
+        for project_id, who, _, _ in matrix:
+            response = await move.client.get(
+                f"{API}/boxes/by-qr/{tokens[project_id]}", headers=headers[who]
+            )
             body = response.json()
-            assert body["access"] == access
-            assert body["project"] == {"id": project_id, "name": project["name"]}
-            assert body["box"]["number"] == 1
+            access = body.get("access") if response.status_code == 200 else None
+            if access is not None:
+                assert body["project"]["id"] == project_id
+            found.append((project_id, who, response.status_code, access))
+
+        assert found == matrix
 
     async def test_unknown_or_malformed_tokens_are_not_found(self, move: Move) -> None:
         unknown = await move.call("GET", "/boxes/by-qr/AAAAAAAAAAAAAAAAAAAAAA")
@@ -446,23 +415,21 @@ class TestItems:
         assert (found["state"], found["box"]["id"]) == ("IN_BOX", box["id"])
         assert (await audit_actions(session_maker, "ITEM")) == ["ITEM_MARKED_LOST", "ITEM_RETURNED"]
 
-    @pytest.mark.parametrize(
-        ("body", "status", "code"),
-        [
+    async def test_state_rules(self, move: Move) -> None:
+        cases = [
             ({"state": "IN_BOX"}, 422, "item_box_mismatch"),
             ({"state": "LOST", "box_id": str(new_id())}, 422, "item_box_mismatch"),
             ({"state": "TAKEN_OUT"}, 409, "invalid_item_transition"),
             ({"state": "IN_BOX", "box_id": str(new_id())}, 404, "box_not_found"),
-        ],
-    )
-    async def test_state_rules(
-        self, move: Move, body: dict[str, str], status: int, code: str
-    ) -> None:
-        item = await move.item()
+        ]
+        item = await move.item()  # TO_PACK; none of the cases changes it
 
-        response = await move.call("PUT", f"/items/{item['id']}/state", json=body)
+        found = []
+        for body, _, _ in cases:
+            response = await move.call("PUT", f"/items/{item['id']}/state", json=body)
+            found.append((body, response.status_code, response.json()["error"]["code"]))
 
-        assert (response.status_code, response.json()["error"]["code"]) == (status, code)
+        assert found == cases
 
     async def test_repeating_a_state_changes_nothing(self, move: Move) -> None:
         item = await move.item()
@@ -511,3 +478,9 @@ class TestItems:
             404,
             "item_not_found",
         )
+        listing = await move.call("GET", f"/projects/{move.project_id}/rooms", as_=move.stranger)
+        renaming = await move.call(
+            "PATCH", f"/rooms/{move.source_id}", json={"name": "Моя"}, as_=move.stranger
+        )
+        assert (listing.status_code, listing.json()["error"]["code"]) == (404, "project_not_found")
+        assert (renaming.status_code, renaming.json()["error"]["code"]) == (404, "room_not_found")

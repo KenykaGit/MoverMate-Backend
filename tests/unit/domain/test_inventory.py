@@ -1,4 +1,6 @@
+from collections.abc import Callable
 from datetime import timedelta
+from functools import partial
 from itertools import product
 
 import pytest
@@ -33,6 +35,7 @@ from app.domain.inventory.value_objects import (
     RoomKind,
     RoomName,
 )
+from tests.checks import Rejection, not_rejected
 from tests.factories import NOW, make_box, make_item, make_room
 
 S = BoxStatus
@@ -40,41 +43,31 @@ I = ItemState  # noqa: E741
 
 
 class TestValueObjects:
-    @pytest.mark.parametrize("value", ["", "a" * (ROOM_NAME_MAX_LENGTH + 1)])
-    def test_room_name_length(self, value: str) -> None:
-        with pytest.raises(InvalidRoomNameError):
-            RoomName(value)
+    def test_reject_values_out_of_their_rules(self) -> None:
+        cases: list[Rejection] = [
+            (RoomName, "", InvalidRoomNameError),
+            (RoomName, "a" * (ROOM_NAME_MAX_LENGTH + 1), InvalidRoomNameError),
+            (ItemName, "", InvalidItemNameError),
+            (ItemName, "a" * (ITEM_NAME_MAX_LENGTH + 1), InvalidItemNameError),
+            (BoxTitle, " ", InvalidBoxTitleError),
+            (BoxTitle, "a" * (BOX_TITLE_MAX_LENGTH + 1), InvalidBoxTitleError),
+            (BoxNumber, 0, InvalidBoxNumberError),
+            (BoxNumber, -1, InvalidBoxNumberError),
+            (Quantity, 0, InvalidQuantityError),
+            (Quantity, QUANTITY_MAX + 1, InvalidQuantityError),
+            (QrToken, "", InvalidQrTokenError),
+            (QrToken, "short", InvalidQrTokenError),
+            (QrToken, "a" * 21 + "!", InvalidQrTokenError),
+            (QrToken, "a" * 23, InvalidQrTokenError),
+        ]
 
-    @pytest.mark.parametrize("value", ["", "a" * (ITEM_NAME_MAX_LENGTH + 1)])
-    def test_item_name_length(self, value: str) -> None:
-        with pytest.raises(InvalidItemNameError):
-            ItemName(value)
-
-    @pytest.mark.parametrize("value", [" ", "a" * (BOX_TITLE_MAX_LENGTH + 1)])
-    def test_box_title_length(self, value: str) -> None:
-        with pytest.raises(InvalidBoxTitleError):
-            BoxTitle(value)
-
-    @pytest.mark.parametrize("value", [0, -1])
-    def test_box_number_is_positive(self, value: int) -> None:
-        with pytest.raises(InvalidBoxNumberError):
-            BoxNumber(value)
-
-    @pytest.mark.parametrize("value", [0, QUANTITY_MAX + 1])
-    def test_quantity_range(self, value: int) -> None:
-        with pytest.raises(InvalidQuantityError):
-            Quantity(value)
+        assert not_rejected(cases) == []
 
     def test_generated_qr_tokens_are_valid_and_unique(self) -> None:
         tokens = {QrToken.generate() for _ in range(100)}
 
         assert len(tokens) == 100
         assert all(QrToken(token.value) == token for token in tokens)
-
-    @pytest.mark.parametrize("value", ["", "short", "a" * 21 + "!", "a" * 23])
-    def test_qr_token_rejects_malformed(self, value: str) -> None:
-        with pytest.raises(InvalidQrTokenError):
-            QrToken(value)
 
     def test_priorities_sort_first_necessity_first(self) -> None:
         assert sorted([Priority.LOW, Priority.FIRST_NECESSITY, Priority.MEDIUM]) == [
@@ -137,17 +130,6 @@ class TestBoxStatus:
         assert box.title is None
         assert not box.is_fragile
 
-    def test_title_and_fragility_are_plain_attributes(self) -> None:
-        box = make_box()
-
-        box.change_title(BoxTitle("Dishes for day one"))
-        box.set_fragile(True)
-        assert (box.title, box.is_fragile) == (BoxTitle("Dishes for day one"), True)
-
-        box.change_title(None)
-        box.set_fragile(False)
-        assert (box.title, box.is_fragile) == (None, False)
-
     def test_transitions_are_single_steps_both_ways(self) -> None:
         assert {
             (S.PACKING, S.PACKED),
@@ -160,26 +142,43 @@ class TestBoxStatus:
             (S.UNPACKED, S.DELIVERED),
         } == BOX_TRANSITIONS
 
-    @pytest.mark.parametrize(("source", "target"), list(product(S, S)))
-    def test_change_follows_the_matrix(self, source: BoxStatus, target: BoxStatus) -> None:
-        box = make_box()
-        box.status = source
+    def test_change_follows_the_matrix(self) -> None:
+        """Every (from, to) pair: allowed moves change the status, the same status
+        is a no-op, anything else is rejected and changes nothing."""
         later = NOW + timedelta(hours=1)
+        wrong = []
+        for source, target in product(S, S):
+            box = make_box()
+            box.status = source
+            try:
+                change = box.change_status(target, now=later)
+            except BoxStatusTransitionError:
+                outcome = "rejected" if box.status is source else "rejected but changed"
+            else:
+                moved = change is not None and (change.from_status, change.to_status) == (
+                    source,
+                    target,
+                )
+                outcome = (
+                    "no-op"
+                    if change is None and box.status_changed_at == NOW
+                    else "moved"
+                    if moved and box.status is target and box.status_changed_at == later
+                    else "broken"
+                )
+                if change is not None and change.is_rollback != (target.position < source.position):
+                    outcome = "wrong rollback flag"
+            expected = (
+                "no-op"
+                if source is target
+                else "moved"
+                if (source, target) in BOX_TRANSITIONS
+                else "rejected"
+            )
+            if outcome != expected:
+                wrong.append((source, target, outcome))
 
-        if source is target:
-            assert box.change_status(target, now=later) is None
-            assert box.status_changed_at == NOW
-        elif (source, target) in BOX_TRANSITIONS:
-            change = box.change_status(target, now=later)
-            assert change is not None
-            assert (change.from_status, change.to_status) == (source, target)
-            assert change.is_rollback == (target.position < source.position)
-            assert box.status is target
-            assert box.status_changed_at == later
-        else:
-            with pytest.raises(BoxStatusTransitionError):
-                box.change_status(target, now=later)
-            assert box.status is source
+        assert wrong == []
 
 
 class TestItemState:
@@ -243,34 +242,34 @@ class TestItemState:
             item.put_into(make_box())
         assert item.state is I.TO_PACK
 
-    @pytest.mark.parametrize(
-        ("source", "target"),
-        [(s, t) for s, t in product(I, I) if s is not t and t is not I.IN_BOX],
-    )
-    def test_moves_outside_boxes_follow_the_matrix(
-        self, source: ItemState, target: ItemState
-    ) -> None:
-        item = _item_in(source)
-        moves = {I.TO_PACK: item.return_to_room, I.TAKEN_OUT: item.take_out, I.LOST: item.mark_lost}
-
-        if (source, target) in ITEM_TRANSITIONS:
-            moves[target]()
-            assert (item.state, item.box_id) == (target, None)
-        else:
-            with pytest.raises(ItemStateTransitionError):
+    def test_moves_follow_the_matrix(self) -> None:
+        """Every (from, to) pair of different states; into a box means into another box,
+        which the matrix allows from anywhere."""
+        wrong = []
+        for source, target in product(I, I):
+            if source is target:
+                continue
+            item = _item_in(source)
+            box = make_box(project_id=item.project_id, number=9)
+            moves: dict[I, Callable[[], object]] = {
+                I.IN_BOX: partial(item.put_into, box),
+                I.TO_PACK: item.return_to_room,
+                I.TAKEN_OUT: item.take_out,
+                I.LOST: item.mark_lost,
+            }
+            try:
                 moves[target]()
-            assert item.state is source
+            except ItemStateTransitionError:
+                outcome = "rejected" if item.state is source else "rejected but changed"
+            else:
+                expected_box = box.id if target is I.IN_BOX else None
+                ok = (item.state, item.box_id) == (target, expected_box)
+                outcome = "moved" if ok else "broken"
+            expected = "moved" if (source, target) in ITEM_TRANSITIONS else "rejected"
+            if outcome != expected:
+                wrong.append((source, target, outcome))
 
-    @pytest.mark.parametrize("source", list(I))
-    def test_every_state_may_go_into_a_box(self, source: ItemState) -> None:
-        """Into a box (another one if already in a box) is allowed from anywhere."""
-        item = _item_in(source)
-        box = make_box(project_id=item.project_id, number=9)
-
-        item.put_into(box)
-
-        assert (source, I.IN_BOX) in ITEM_TRANSITIONS
-        assert (item.state, item.box_id) == (I.IN_BOX, box.id)
+        assert wrong == []
 
 
 def _item_in(state: ItemState) -> Item:

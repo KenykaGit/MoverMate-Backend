@@ -59,30 +59,30 @@ def test_room() -> None:
     assert state(RoomMapper.to_domain(RoomMapper.to_model(room))) == state(room)
 
 
-@pytest.mark.parametrize("title", [None, BoxTitle("Dishes")])
-def test_box(title: BoxTitle | None) -> None:
-    box = make_box()
-    box.change_title(title)
-    box.set_fragile(True)
+def test_box() -> None:
+    for title in (None, BoxTitle("Dishes")):
+        box = make_box()
+        box.change_title(title)
+        box.set_fragile(True)
 
-    model = BoxMapper.to_model(box)
+        model = BoxMapper.to_model(box)
 
-    assert model.created_by_id == box.created_by
-    assert state(BoxMapper.to_domain(model)) == state(box)
+        assert model.created_by_id == box.created_by
+        assert state(BoxMapper.to_domain(model)) == state(box)
 
 
-@pytest.mark.parametrize("packed", [False, True])
-def test_item(packed: bool) -> None:
-    item = make_item()
-    item.change_quantity(Quantity(3))
-    item.set_priority(Priority.FIRST_NECESSITY)
-    if packed:
-        item.put_into(make_box(project_id=item.project_id))
+def test_item() -> None:
+    for packed in (False, True):
+        item = make_item()
+        item.change_quantity(Quantity(3))
+        item.set_priority(Priority.FIRST_NECESSITY)
+        if packed:
+            item.put_into(make_box(project_id=item.project_id))
 
-    model = ItemMapper.to_model(item)
+        model = ItemMapper.to_model(item)
 
-    assert model.priority == 0  # stored as a number, sorts without CASE
-    assert state(ItemMapper.to_domain(model)) == state(item)
+        assert model.priority == 0  # stored as a number, sorts without CASE
+        assert state(ItemMapper.to_domain(model)) == state(item)
 
 
 def test_task_with_assignees_and_reminders() -> None:
@@ -103,26 +103,28 @@ def test_task_with_assignees_and_reminders() -> None:
     assert state(TaskMapper.to_domain(model)) == state(task)
 
 
-@pytest.mark.parametrize(
-    "target",
-    [
+def test_notification_of_every_type() -> None:
+    targets: list[NotificationTarget] = [
         TaskAssigned(TaskId(new_id())),
         TaskReminder(TaskId(new_id()), ReminderOffset(48)),
         BoxContentsReminder(BoxId(new_id())),
         MovingDateReminder(MovingReminderOffset(3)),
-    ],
-)
-def test_notification(target: NotificationTarget) -> None:
-    notification = Notification.schedule(
-        project_id=ProjectId(new_id()), user_id=UserId(new_id()), target=target, at=NOW, now=NOW
-    )
-    assert notification is not None
-    notification.record_failure("timeout", now=NOW)
+    ]
+    for target in targets:
+        notification = Notification.schedule(
+            project_id=ProjectId(new_id()),
+            user_id=UserId(new_id()),
+            target=target,
+            at=NOW,
+            now=NOW,
+        )
+        assert notification is not None
+        notification.record_failure("timeout", now=NOW)
 
-    model = NotificationMapper.to_model(notification)
+        model = NotificationMapper.to_model(notification)
 
-    assert model.type == notification.type.value
-    assert state(NotificationMapper.to_domain(model)) == state(notification)
+        assert model.type == notification.type.value
+        assert state(NotificationMapper.to_domain(model)) == state(notification)
 
 
 def test_notification_row_that_breaks_the_type_rule_is_rejected() -> None:

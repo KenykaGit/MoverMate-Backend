@@ -1,5 +1,3 @@
-import pytest
-
 from app.application.health.check_readiness import CheckReadiness
 from app.application.health.dto import Readiness, ReadinessProbes
 from tests.conftest import LogEvents
@@ -27,14 +25,14 @@ async def test_auxiliary_outage_degrades(log_events: LogEvents) -> None:
     assert event["dependency"] == "redis"
 
 
-@pytest.mark.parametrize("redis_healthy", [True, False])
-async def test_critical_outage_makes_the_service_unavailable(redis_healthy: bool) -> None:
-    result = await readiness(
-        postgres=FakeHealthProbe(healthy=False), redis=FakeHealthProbe(healthy=redis_healthy)
-    )()
+async def test_critical_outage_makes_the_service_unavailable() -> None:
+    for redis_healthy in (True, False):
+        result = await readiness(
+            postgres=FakeHealthProbe(healthy=False), redis=FakeHealthProbe(healthy=redis_healthy)
+        )()
 
-    assert result.status is Readiness.UNAVAILABLE
-    assert result.checks["postgres"] is Readiness.UNAVAILABLE
+        assert result.status is Readiness.UNAVAILABLE
+        assert result.checks["postgres"] is Readiness.UNAVAILABLE
 
 
 async def test_a_hanging_dependency_counts_as_down() -> None:

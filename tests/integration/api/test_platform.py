@@ -80,21 +80,18 @@ async def test_ready_is_degraded_while_notifications_wait_too_long(
     assert failure["dependency"] == "notifications"
 
 
-@pytest.mark.parametrize(
-    "notification",
-    [
+async def test_ready_ignores_notifications_that_do_not_lag(
+    client: AsyncClient, engine: AsyncEngine
+) -> None:
+    notifications: list[dict[str, Any]] = [
         {"scheduled_at": timedelta(hours=1)},  # not due yet
         {"scheduled_at": -timedelta(minutes=1)},  # due, within the limit
         {"scheduled_at": -timedelta(days=1), "status": "SENT"},  # old, but done
         {"scheduled_at": -timedelta(days=1), "status": "CANCELLED"},
-    ],
-    ids=["future", "recent", "sent", "cancelled"],
-)
-async def test_ready_ignores_notifications_that_do_not_lag(
-    client: AsyncClient, engine: AsyncEngine, notification: dict[str, Any]
-) -> None:
-    scheduled_at = datetime.now(UTC) + notification.pop("scheduled_at")
-    await pending_notification(engine, scheduled_at=scheduled_at, **notification)
+    ]
+    for notification in notifications:
+        scheduled_at = datetime.now(UTC) + notification.pop("scheduled_at")
+        await pending_notification(engine, scheduled_at=scheduled_at, **notification)
 
     response = await client.get("/health/ready")
 
@@ -140,13 +137,10 @@ async def test_request_id_is_echoed_and_logged(client: AsyncClient, log_events: 
     access = [e for e in log_events() if e["event"] == "http_request"]
     assert access[-1]["request_id"] == "trace-123"
     assert access[-1]["route"] == "/health/live"
-
-
-async def test_unsafe_request_id_is_replaced(client: AsyncClient) -> None:
-    response = await client.get("/health/live", headers={"X-Request-ID": "bad id\twith spaces"})
-
-    assert response.headers["X-Request-ID"] != "bad id\twith spaces"
-    assert len(response.headers["X-Request-ID"]) == 32
+    # An unsafe one is replaced with a fresh id.
+    unsafe = await client.get("/health/live", headers={"X-Request-ID": "bad id\twith spaces"})
+    assert unsafe.headers["X-Request-ID"] != "bad id\twith spaces"
+    assert len(unsafe.headers["X-Request-ID"]) == 32
 
 
 async def test_error_body_carries_the_request_id(client: AsyncClient) -> None:

@@ -25,6 +25,7 @@ from app.infrastructure.push.vapid import (
     application_server_key,
     load_or_create_private_key,
 )
+from tests.checks import not_rejected
 from tests.integration.push_service import (
     FAKE_HOST,
     Browser,
@@ -112,16 +113,16 @@ class TestDelivery:
         assert claims["sub"] == "mailto:ops@example.com"
         assert time.time() < claims["exp"] <= time.time() + MAX_VAPID_LIFETIME_SECONDS
 
-    @pytest.mark.parametrize("status", [200, 201, 202])
     async def test_accepted_statuses(
-        self, sender: WebPushSender, push_service: FakePushService, status: int
+        self, sender: WebPushSender, push_service: FakePushService
     ) -> None:
-        browser = push_service.browser()
-        push_service.answer(browser, status)
+        outcomes = []
+        for status in (200, 201, 202):
+            browser = push_service.browser()
+            push_service.answer(browser, status)
+            outcomes.append((await sender.send(browser.subscription(USER), MESSAGE)).outcome)
 
-        result = await sender.send(browser.subscription(USER), MESSAGE)
-
-        assert result.outcome is PushOutcome.DELIVERED
+        assert outcomes == [PushOutcome.DELIVERED] * 3
 
     async def test_one_sender_serves_many_browsers(
         self, sender: WebPushSender, push_service: FakePushService
@@ -135,33 +136,22 @@ class TestDelivery:
 
 
 class TestFailures:
-    @pytest.mark.parametrize("status", [404, 410])
-    async def test_unknown_subscription_is_gone(
-        self, sender: WebPushSender, push_service: FakePushService, status: int
+    async def test_error_statuses(
+        self, sender: WebPushSender, push_service: FakePushService
     ) -> None:
-        browser = push_service.browser()
-        push_service.answer(browser, status)
+        """404 and 410 retire the subscription; the rest fail without revealing the endpoint."""
+        statuses = {404: PushOutcome.GONE, 410: PushOutcome.GONE}
+        statuses |= dict.fromkeys((400, 413, 429, 500, 503), PushOutcome.FAILED)
+        wrong = []
+        for status, outcome in statuses.items():
+            browser = push_service.browser()
+            push_service.answer(browser, status)
+            result = await sender.send(browser.subscription(USER), MESSAGE)
+            expected = PushResult(outcome, f"{FAKE_HOST}:{push_service.port} answered {status}")
+            if result != expected or browser.path in (result.detail or ""):
+                wrong.append((status, result))
 
-        result = await sender.send(browser.subscription(USER), MESSAGE)
-
-        assert result == PushResult(
-            PushOutcome.GONE, f"{FAKE_HOST}:{push_service.port} answered {status}"
-        )
-
-    @pytest.mark.parametrize("status", [400, 413, 429, 500, 503])
-    async def test_other_errors_fail_without_revealing_the_endpoint(
-        self, sender: WebPushSender, push_service: FakePushService, status: int
-    ) -> None:
-        browser = push_service.browser()
-        push_service.answer(browser, status)
-
-        result = await sender.send(browser.subscription(USER), MESSAGE)
-
-        assert result == PushResult(
-            PushOutcome.FAILED, f"{FAKE_HOST}:{push_service.port} answered {status}"
-        )
-        assert result.detail is not None
-        assert browser.path not in result.detail
+        assert wrong == []
 
     async def test_connection_refused_fails(self, sender: WebPushSender) -> None:
         browser = Browser.create(f"https://{FAKE_HOST}:1/push/secret-token")  # closed port
@@ -190,29 +180,25 @@ class TestFailures:
         assert result.detail.startswith(f"{FAKE_HOST}:{push_service.port}: ")
         assert "Timeout" in result.detail
 
-    @pytest.mark.parametrize(
-        "p256dh",
-        [
+    async def test_unusable_browser_keys_are_gone(
+        self, sender: WebPushSender, push_service: FakePushService
+    ) -> None:
+        keys = [
             "AAAA",  # base64url, but too short for a key
             b64url(b"\x04" + bytes(64)),  # the right length, not a point of the curve
-        ],
-        ids=["short", "off-curve"],
-    )
-    async def test_unusable_browser_keys_are_gone(
-        self, sender: WebPushSender, push_service: FakePushService, p256dh: str
-    ) -> None:
-        browser = push_service.browser()
-        subscription = PushSubscription.subscribe(
-            user_id=USER,
-            endpoint=PushEndpoint(browser.endpoint),
-            keys=PushKeys(p256dh=p256dh, auth=browser.auth),
-        )
+        ]
+        results = []
+        for p256dh in keys:
+            browser = push_service.browser()
+            subscription = PushSubscription.subscribe(
+                user_id=USER,
+                endpoint=PushEndpoint(browser.endpoint),
+                keys=PushKeys(p256dh=p256dh, auth=browser.auth),
+            )
+            result = await sender.send(subscription, MESSAGE)
+            results.append((result.outcome, (result.detail or "").startswith("invalid subscr")))
 
-        result = await sender.send(subscription, MESSAGE)
-
-        assert result.outcome is PushOutcome.GONE
-        assert result.detail is not None
-        assert result.detail.startswith("invalid subscription keys")
+        assert results == [(PushOutcome.GONE, True)] * len(keys)
         assert push_service.received == [], "nothing undecryptable is sent"
 
 
@@ -242,7 +228,7 @@ class TestVapidKeyStore:
         assert api.public_key() == first, "cached"
         assert key_file.read_bytes() == written, "never overwritten"
 
-    def test_nothing_is_created_before_first_use(self, tmp_path: Path) -> None:
+    def test_no_file_before_first_use_or_with_a_configured_pem(self, tmp_path: Path) -> None:
         key_file = tmp_path / "private_key.pem"
 
         WebPushSender(
@@ -251,6 +237,7 @@ class TestVapidKeyStore:
             ttl_seconds=60,
             timeout_seconds=1,
         )
+        load_or_create_private_key(pem(ec.generate_private_key(ec.SECP256R1())), key_file)
 
         assert not key_file.exists()
 
@@ -262,14 +249,6 @@ class TestVapidKeyStore:
         store = VapidKeyStore(private_key_pem=pem(configured), key_file=key_file)
 
         assert store.public_key() == application_server_key(configured)
-
-    def test_configured_pem_creates_no_file(self, tmp_path: Path) -> None:
-        key_file = tmp_path / "private_key.pem"
-        configured = ec.generate_private_key(ec.SECP256R1())
-
-        load_or_create_private_key(pem(configured), key_file)
-
-        assert not key_file.exists()
 
     def test_losing_the_creation_race_reads_the_winners_key(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -288,23 +267,21 @@ class TestVapidKeyStore:
 
         assert application_server_key(key) == application_server_key(winner)
 
-    @pytest.mark.parametrize(
-        "configured",
-        [
+    def test_rejects_a_configured_key_that_is_not_p256(self, tmp_path: Path) -> None:
+        configured = [
             "not a pem at all",
             "-----BEGIN PRIVATE KEY-----\nAAAA\n-----END PRIVATE KEY-----\n",
             pem(ec.generate_private_key(ec.SECP384R1())),
             pem(rsa.generate_private_key(public_exponent=65537, key_size=2048)),
-        ],
-        ids=["garbage", "broken-pem", "p384", "rsa"],
-    )
-    def test_rejects_a_configured_key_that_is_not_p256(
-        self, tmp_path: Path, configured: str
-    ) -> None:
-        store = VapidKeyStore(private_key_pem=configured, key_file=tmp_path / "unused.pem")
+        ]
+        stores = [
+            VapidKeyStore(private_key_pem=key, key_file=tmp_path / "unused.pem")
+            for key in configured
+        ]
 
-        with pytest.raises(InvalidVapidKeyError):
-            store.public_key()
+        assert (
+            not_rejected((VapidKeyStore.public_key, s, InvalidVapidKeyError) for s in stores) == []
+        )
 
     def test_rejects_a_corrupted_key_file(self, tmp_path: Path) -> None:
         key_file = tmp_path / "private_key.pem"

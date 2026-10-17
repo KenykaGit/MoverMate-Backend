@@ -69,19 +69,15 @@ async def test_username_of_a_deleted_user_is_free(
     assert result.username == "john_doe"
 
 
-@pytest.mark.parametrize(
-    "data",
-    [
+async def test_rejects_invalid_values(register: RegisterUser, uow: FakeUnitOfWork) -> None:
+    invalid = [
         RegisterUserDTO(username="j", password=PASSWORD),
         RegisterUserDTO(username="john@example.com", password=PASSWORD),
         RegisterUserDTO(username="john_doe", password="short"),
-    ],
-)
-async def test_rejects_invalid_values(
-    register: RegisterUser, uow: FakeUnitOfWork, data: RegisterUserDTO
-) -> None:
-    with pytest.raises(DomainError):
-        await register(data)
+    ]
+    for data in invalid:
+        with pytest.raises(DomainError):
+            await register(data)
 
     assert uow.commits == 0
 

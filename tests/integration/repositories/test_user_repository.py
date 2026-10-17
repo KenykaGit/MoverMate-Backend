@@ -46,17 +46,14 @@ async def timestamps(session_maker: SessionMaker, user_id: UserId) -> tuple[date
 
 
 class TestAdd:
-    @pytest.mark.parametrize("is_active", [True, False])
-    async def test_persists_all_attributes(
-        self, session_maker: SessionMaker, is_active: bool
-    ) -> None:
-        user = make_user(is_active=is_active)
+    async def test_persists_all_attributes(self, session_maker: SessionMaker) -> None:
+        users = [make_user(username="active"), make_user(username="deleted", is_active=False)]
 
-        await save(session_maker, user)
+        for user in users:
+            await save(session_maker, user)
 
-        loaded = await load(session_maker, user.id)
-        assert loaded is not None
-        assert user_state(loaded) == user_state(user)
+        loaded = [await load(session_maker, user.id) for user in users]
+        assert [user_state(u) if u else None for u in loaded] == [user_state(u) for u in users]
 
     async def test_is_not_persisted_without_commit(self, session_maker: SessionMaker) -> None:
         user = make_user()

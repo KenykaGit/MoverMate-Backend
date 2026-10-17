@@ -22,6 +22,7 @@ from app.domain.notifications.notification import (
     TaskReminder,
 )
 from app.domain.notifications.push_subscription import PushEndpoint, PushKeys, PushSubscription
+from tests.checks import Rejection, not_rejected
 from tests.factories import NOW
 
 ENDPOINT = "https://fcm.googleapis.com/fcm/send/abc"
@@ -65,22 +66,15 @@ class TestSchedule:
             is None
         )
 
-    @pytest.mark.parametrize(
-        ("target", "expected"),
-        [
+    def test_type_follows_the_target(self) -> None:
+        cases: list[tuple[NotificationTarget, NotificationType]] = [
             (TaskAssigned(TaskId(new_id())), NotificationType.TASK_ASSIGNED),
             (TaskReminder(TaskId(new_id()), ReminderOffset(2)), NotificationType.TASK_REMINDER),
             (BoxContentsReminder(BoxId(new_id())), NotificationType.BOX_CONTENTS_REMINDER),
-            (
-                MovingDateReminder(MovingReminderOffset(7)),
-                NotificationType.MOVING_DATE_REMINDER,
-            ),
-        ],
-    )
-    def test_type_follows_the_target(
-        self, target: NotificationTarget, expected: NotificationType
-    ) -> None:
-        assert schedule(target).type is expected
+            (MovingDateReminder(MovingReminderOffset(7)), NotificationType.MOVING_DATE_REMINDER),
+        ]
+
+        assert [schedule(target).type for target, _ in cases] == [expected for _, expected in cases]
 
 
 class TestDelivery:
@@ -90,20 +84,17 @@ class TestDelivery:
             NotificationStatus.PENDING
         }
 
-    def test_mark_sent(self) -> None:
-        notification = schedule()
+    def test_sent_skipped_and_cancelled(self) -> None:
+        sent, skipped, cancelled = schedule(), schedule(), schedule()
 
-        notification.mark_sent(now=NOW)
+        sent.mark_sent(now=NOW)
+        skipped.mark_skipped()
+        assert cancelled.cancel()
+        assert not cancelled.cancel()
 
-        assert notification.status is NotificationStatus.SENT
-        assert notification.sent_at == NOW
-
-    def test_mark_skipped(self) -> None:
-        notification = schedule()
-
-        notification.mark_skipped()
-
-        assert notification.status is NotificationStatus.SKIPPED
+        assert (sent.status, sent.sent_at) == (NotificationStatus.SENT, NOW)
+        assert skipped.status is NotificationStatus.SKIPPED
+        assert cancelled.status is NotificationStatus.CANCELLED
 
     def test_failures_back_off_exponentially_then_give_up(self) -> None:
         notification = schedule()
@@ -120,13 +111,6 @@ class TestDelivery:
         assert notification.last_error is not None
         assert len(notification.last_error) == 1000
 
-    def test_cancel_only_while_pending(self) -> None:
-        notification = schedule()
-
-        assert notification.cancel()
-        assert not notification.cancel()
-        assert notification.status is NotificationStatus.CANCELLED
-
     def test_finished_notifications_cannot_be_sent_again(self) -> None:
         notification = schedule()
         notification.mark_sent(now=NOW)
@@ -140,20 +124,16 @@ class TestDelivery:
 
 
 class TestPushSubscription:
-    @pytest.mark.parametrize(
-        "value", ["http://push.example/1", "push.example", "https://" + "a" * 2048]
-    )
-    def test_endpoint_must_be_https(self, value: str) -> None:
-        with pytest.raises(InvalidPushSubscriptionError):
-            PushEndpoint(value)
+    def test_endpoint_must_be_https_and_keys_base64url(self) -> None:
+        endpoints = ["http://push.example/1", "push.example", "https://" + "a" * 2048]
+        keys = [("", "abc"), ("abc", "not base64!")]
+        cases: list[Rejection] = [
+            *((PushEndpoint, value, InvalidPushSubscriptionError) for value in endpoints),
+            *((lambda pair: PushKeys(*pair), pair, InvalidPushSubscriptionError) for pair in keys),
+        ]
 
-    @pytest.mark.parametrize(("p256dh", "auth"), [("", "abc"), ("abc", "not base64!")])
-    def test_keys_must_be_base64url(self, p256dh: str, auth: str) -> None:
-        with pytest.raises(InvalidPushSubscriptionError):
-            PushKeys(p256dh=p256dh, auth=auth)
-
-    def test_keys_are_hidden_from_repr(self) -> None:
-        assert KEYS.auth not in repr(KEYS)
+        assert not_rejected(cases) == []
+        assert KEYS.auth not in repr(KEYS), "the keys are secrets"
 
     def test_renew_moves_it_to_another_user_and_reactivates(self) -> None:
         subscription = PushSubscription.subscribe(

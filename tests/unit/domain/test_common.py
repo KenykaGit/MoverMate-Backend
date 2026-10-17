@@ -1,7 +1,5 @@
 from datetime import timedelta
 
-import pytest
-
 from app.domain.common.errors import (
     InvalidMovingReminderOffsetError,
     InvalidReminderOffsetError,
@@ -14,31 +12,28 @@ from app.domain.common.reminders import (
     MovingReminderOffset,
     ReminderOffset,
 )
+from tests.checks import not_rejected
 
 
-class TestReminderOffset:
-    @pytest.mark.parametrize("hours", [REMINDER_OFFSET_MIN_HOURS, 2, REMINDER_OFFSET_MAX_HOURS])
-    def test_any_whole_hours_in_range(self, hours: int) -> None:
-        assert ReminderOffset(hours).delta == timedelta(hours=hours)
+def test_reminder_offset_takes_any_whole_hours_in_range() -> None:
+    hours = [REMINDER_OFFSET_MIN_HOURS, 2, REMINDER_OFFSET_MAX_HOURS]
+    outside = [REMINDER_OFFSET_MIN_HOURS - 1, -5, REMINDER_OFFSET_MAX_HOURS + 1]
 
-    @pytest.mark.parametrize(
-        "hours", [REMINDER_OFFSET_MIN_HOURS - 1, -5, REMINDER_OFFSET_MAX_HOURS + 1]
+    assert [ReminderOffset(h).delta for h in hours] == [timedelta(hours=h) for h in hours]
+    assert not_rejected((ReminderOffset, h, InvalidReminderOffsetError) for h in outside) == []
+
+
+def test_reminder_offset_is_equal_by_value() -> None:
+    assert ReminderOffset(24) == ReminderOffset(24)
+    assert len({ReminderOffset(24), ReminderOffset(24), ReminderOffset(2)}) == 2
+
+
+def test_moving_reminder_offset_takes_any_whole_days_in_range() -> None:
+    days = [MOVING_REMINDER_MIN_DAYS, 7, MOVING_REMINDER_MAX_DAYS]
+    outside = [MOVING_REMINDER_MIN_DAYS - 1, MOVING_REMINDER_MAX_DAYS + 1]
+
+    assert [MovingReminderOffset(d).days for d in days] == days
+    assert (
+        not_rejected((MovingReminderOffset, d, InvalidMovingReminderOffsetError) for d in outside)
+        == []
     )
-    def test_rejects_out_of_range(self, hours: int) -> None:
-        with pytest.raises(InvalidReminderOffsetError):
-            ReminderOffset(hours)
-
-    def test_equal_by_value(self) -> None:
-        assert ReminderOffset(24) == ReminderOffset(24)
-        assert len({ReminderOffset(24), ReminderOffset(24), ReminderOffset(2)}) == 2
-
-
-class TestMovingReminderOffset:
-    @pytest.mark.parametrize("days", [MOVING_REMINDER_MIN_DAYS, 7, MOVING_REMINDER_MAX_DAYS])
-    def test_any_whole_days_in_range(self, days: int) -> None:
-        assert MovingReminderOffset(days).days == days
-
-    @pytest.mark.parametrize("days", [MOVING_REMINDER_MIN_DAYS - 1, MOVING_REMINDER_MAX_DAYS + 1])
-    def test_rejects_out_of_range(self, days: int) -> None:
-        with pytest.raises(InvalidMovingReminderOffsetError):
-            MovingReminderOffset(days)
