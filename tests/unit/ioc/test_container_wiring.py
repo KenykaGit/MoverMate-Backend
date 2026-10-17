@@ -79,6 +79,8 @@ def settings() -> Settings:
         ),
         rate_limit=RateLimitSettings(api_per_minute=42, auth_per_minute=7, scan_per_minute=3),
         push=PushSettings(vapid_key_file=Path("/nonexistent/wiring-test/vapid.pem")),
+        # Explicit: CI and developers may have LLM__API_KEY in the environment.
+        llm=LlmSettings(api_key=None),
     )
 
 
