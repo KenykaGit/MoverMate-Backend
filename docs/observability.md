@@ -126,7 +126,7 @@ SQLAlchemy) проходят через один конвейер. Каждая 
 | `worker_started` | info | `version`, `interval` | воркер запущен (`WORKER_STARTUP`), контейнер зависимостей создан; `interval` — период планировщика в секундах |
 | `notifications_drained` | info | `count` | за запуск задачи обработано столько уведомлений (пустые запуски не пишутся) |
 | `notification_processed` | info / **warning** для `FAILED` | `notification_id`, `notification_type`, `project_id`, `user_id`, `outcome`, `attempts`, `delay_seconds` | исход уведомления: `SENT`, `SKIPPED` (нет подписок), `CANCELLED` (причина отпала), `RETRY` (все push-сервисы ответили ошибкой, повтор позже), `FAILED` (последняя попытка); `delay_seconds` — опоздание относительно `scheduled_at` |
-| `push_subscription_gone` | info | `subscription_id`, `user_id`, `reason` | push-сервис ответил 404/410 (`reason`: «<хост> answered 410») или ключи браузера не годятся для шифрования (`reason`: «invalid subscription keys: …»): подписка отключена. То же событие пишет api при `POST /push/test` |
+| `push_subscription_gone` | info | `subscription_id`, `user_id`, `reason` | push-сервис ответил 404/410 (`reason`: «<хост> answered 410») или ключи браузера не годятся для шифрования (`reason`: «invalid subscription keys: …»): подписка отключена. |
 | `redis_unavailable` | warning | `op=task_queue_pop`, `error` | воркер не смог прочитать очередь taskiq (Redis недоступен); повтор через 1 с, процесс не перезапускается. Уведомления ждут в Postgres |
 | **`worker_iteration_failed`** | **error** + traceback | — | запуск задачи упал (чаще всего недоступна БД); heartbeat не обновляется, следующий сигнал попробует снова |
 | `worker_stopped` | info | — | воркер остановлен (`WORKER_SHUTDOWN`), контейнер зависимостей закрыт |

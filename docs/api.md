@@ -35,7 +35,6 @@
 | GET | `/api/v1/push/vapid-public-key` (`getVapidPublicKey`) | 200 `{public_key}` | — (без аутентификации) |
 | PUT | `/api/v1/push/subscriptions` (`upsertPushSubscription`) `{endpoint, keys: {p256dh, auth}}` | 204, upsert по `endpoint` | 401, 422 `invalid_push_subscription` |
 | DELETE | `/api/v1/push/subscriptions?endpoint=` (`deletePushSubscription`) | 204 всегда | 401 |
-| POST | `/api/v1/push/test` (`sendTestPush`) `{username, text}` — **временная**, будет удалена | 200 `{attempted, delivered, errors: [{subscription_id, outcome, detail}]}` | 401, 404 `user_not_found`, 422 `invalid_username` |
 | GET | `/health/live` | 200 `{"status":"ok"}` | — |
 | GET | `/health/ready` | 200 `ok`/`degraded` | 503 `unavailable` |
 
