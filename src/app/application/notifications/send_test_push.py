@@ -64,6 +64,14 @@ class SendTestPush:
             if result.outcome is PushOutcome.GONE:
                 subscription.deactivate()
                 await self._subscriptions.update(subscription)
+                logger.info(
+                    "push_subscription_gone",
+                    extra={
+                        "subscription_id": str(subscription.id),
+                        "user_id": str(subscription.user_id),
+                        "reason": result.detail,
+                    },
+                )
             errors.append(
                 PushTestFailureDTO(
                     subscription_id=subscription.id,

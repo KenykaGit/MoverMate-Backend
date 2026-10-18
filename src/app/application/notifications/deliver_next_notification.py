@@ -96,6 +96,7 @@ class DeliverNextNotification:
                         extra={
                             "subscription_id": str(subscription.id),
                             "user_id": str(subscription.user_id),
+                            "reason": result.detail,
                         },
                     )
                 case PushOutcome.FAILED:

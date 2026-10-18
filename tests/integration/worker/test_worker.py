@@ -327,6 +327,8 @@ class TestGone:
         assert [(e["subscription_id"], e["user_id"]) for e in events] == [
             (gone_id, move.member_id) for gone_id in gone_ids
         ]
+        # The reason tells "the browser dropped it" from "its keys are broken".
+        assert [e["reason"].rsplit(" ", 1)[-1] for e in events] == ["404", "410"]
 
     async def test_all_gone_is_skipped_and_never_tried_again(
         self, worker: AsyncContainer, engine: AsyncEngine, move: Move, push_service: FakePushService
