@@ -8,6 +8,7 @@ class HttpSettings:
     title: str
     version: str
     cors_origins: tuple[str, ...] = ()
+    seed_test_users: bool = False
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

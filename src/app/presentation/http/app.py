@@ -7,6 +7,8 @@ from dishka.integrations.fastapi import setup_dishka
 from fastapi import APIRouter, Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.application.seed.dto import SeedTestUsersDTO
+from app.application.seed.seed_test_users import SeedTestUsers
 from app.presentation.http.errors import (
     ERROR_RESPONSES,
     REQUEST_ID_HEADER,
@@ -35,12 +37,27 @@ logger = structlog.get_logger(__name__)
 API_PREFIX = "/api/v1"
 
 
+async def seed_test_users(container: AsyncContainer) -> None:
+    """Resolve the use case by hand in its own request scope, as a route would.
+
+    A failure is logged, not raised: test data must never keep the api from starting.
+    """
+    try:
+        async with container() as scope:
+            seed = await scope.get(SeedTestUsers)
+            await seed(SeedTestUsersDTO())
+    except Exception:  # startup must survive e.g. a not yet migrated database
+        logger.exception("test_users_seed_failed")
+
+
 def create_app(container: AsyncContainer, settings: HttpSettings) -> FastAPI:
     """Build the HTTP app around a configured container; the app owns it."""
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         logger.info("startup", version=settings.version)
+        if settings.seed_test_users:
+            await seed_test_users(container)
         yield
         await container.close()  # disposes the engine, closes Redis
         logger.info("shutdown")

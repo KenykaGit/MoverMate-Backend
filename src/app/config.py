@@ -134,6 +134,9 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     log_json: bool = True
     cors_origins: list[str] = []
+    seed_test_users: bool = False
+    """Register the test accounts with their projects on startup (see SeedTestUsers).
+    Never in prod: the accounts share a public password."""
 
     database: DatabaseSettings = DatabaseSettings()
     redis: RedisSettings = RedisSettings()
@@ -147,6 +150,8 @@ class Settings(BaseSettings):
     @model_validator(mode="after")
     def _check_prod_secrets(self) -> Self:
         if self.env is Environment.PROD:
+            if self.seed_test_users:
+                raise ValueError("SEED_TEST_USERS must be false in prod: the passwords are public")
             if self.auth.secret_key.get_secret_value() == DEV_SECRET_KEY:
                 raise ValueError("AUTH__SECRET_KEY must be set to a random value in prod")
             if self.log_json is False:

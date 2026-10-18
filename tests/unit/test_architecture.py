@@ -43,13 +43,15 @@ APPLICATION_FEATURE_DEPS = {
     "tasks": frozenset[str](),
     # Overview screens over the inventory and the plan: their reference views.
     "summaries": frozenset({"inventory", "tasks"}),
+    # Test data goes in through the real use cases of the features it fills.
+    "seed": frozenset({"users", "projects", "inventory", "tasks"}),
 }
 APPLICATION_SHARED = ("app.application.common", "app.application.interfaces")
 APPLICATION_SHARED_MODULES = ("app.application.exceptions",)
 # Modules of a feature that are not use cases.
 # read_model: a port of a feature (it returns the feature's DTOs, so it cannot live in
 # application/interfaces, which must not import features).
-NOT_USE_CASES = frozenset({"dto", "services", "lookup", "read_model", "__init__"})
+NOT_USE_CASES = frozenset({"dto", "services", "lookup", "read_model", "catalog", "__init__"})
 
 # Top-level package -> source paths (relative to src/app) allowed to import it.
 TECHNOLOGY_HOMES: dict[str, tuple[str, ...]] = {
@@ -231,7 +233,9 @@ def test_codebase_follows_the_rules() -> None:
     found = [
         f"{path.relative_to(SRC)}: {problem}"
         for path in source_files()
-        for problem in violations(path.relative_to(SRC).as_posix(), path.read_text())
+        for problem in violations(
+            path.relative_to(SRC).as_posix(), path.read_text(encoding="utf-8")
+        )
     ]
     assert not found, "Architecture rules broken:\n" + "\n".join(found)
 

@@ -43,6 +43,7 @@ from app.application.projects.remove_collaborator import RemoveCollaborator
 from app.application.projects.services import MovingReminderScheduler
 from app.application.projects.set_project_reminders import SetProjectReminders
 from app.application.projects.update_project import UpdateProject
+from app.application.seed.seed_test_users import SeedTestUsers
 from app.application.summaries.get_box_labels import GetBoxLabels
 from app.application.summaries.get_loading_checklist import GetLoadingChecklist
 from app.application.summaries.get_project_summary import GetProjectSummary
@@ -101,6 +102,7 @@ class UseCaseProvider(Provider):
         AddCollaborator,
         RemoveCollaborator,
     )
+    seed = provide_all(SeedTestUsers)
     summaries = provide_all(
         GetProjectSummary, GetLoadingChecklist, GetUnpackingProgress, GetBoxLabels
     )

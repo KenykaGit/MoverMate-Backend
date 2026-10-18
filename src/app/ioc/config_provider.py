@@ -20,6 +20,7 @@ def http_settings_from(settings: Settings) -> HttpSettings:
         title=settings.app_name,
         version=settings.app_version,
         cors_origins=tuple(settings.cors_origins),
+        seed_test_users=settings.seed_test_users,
     )
 
 

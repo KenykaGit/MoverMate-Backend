@@ -93,6 +93,8 @@ SQLAlchemy) проходят через один конвейер. Каждая 
 | `login_failed` | info | `reason=unknown_login\|wrong_password` | без имени пользователя и пароля: опечатка в поле имени пользователя могла бы оказаться паролем |
 | **`refresh_token_reused`** | **warning** | `user_id`, `family_id`, `token_id` | возможна кража сессии; эта сессия (семья токенов) отозвана, остальные работают |
 | `password_changed`, `user_deleted`, `user_restored` | info | `user_id` | аудит |
+| `test_users_seeded` | info | `created`, `skipped` | `SEED_TEST_USERS=true`: тестовые аккаунты созданы или уже были |
+| `test_users_seed_failed` | error | traceback | заполнение тестовыми данными упало; api всё равно стартует |
 | `project_created` | info | `project_id`, `user_id`, `rooms` | создан проект и `rooms` комнат |
 | `project_rescheduled` | info | `project_id`, `moving_date` | сменились дата переезда или часовой пояс; ожидающие напоминания пересозданы |
 | `project_reminders_changed` | info | `project_id`, `offsets_days` | новый набор напоминаний о переезде (повтор того же набора не пишется) |

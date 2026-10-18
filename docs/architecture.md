@@ -126,7 +126,13 @@ stdout контейнеров с меткой sage.logs ──Docker API──�
 - Фичи `users`, `auth`, `health`, `projects`, `notifications`, `inventory`, `summaries`
   независимы. Исключений два: `auth` использует `users` (`AuthenticateUser` вызывает
   `GetUser`), а `summaries` использует `inventory` (проверку участия и DTO ссылок на комнаты и
-  коробки).
+  коробки). Третье исключение — `seed`: `SeedTestUsers` создаёт тестовые данные через
+  настоящие use cases `users`, `projects`, `inventory` и `tasks`.
+- **Тестовые аккаунты.** При `SEED_TEST_USERS=true` (локально; в prod настройка запрещена)
+  `create_app` на старте вручную достаёт `SeedTestUsers` из контейнера и вызывает его: пять
+  аккаунтов (`test_empty_1`, `test_empty_2` пустые; `test_small`, `test_medium`,
+  `test_large` с проектами разного размера), пароль и данные лежат в `seed/catalog.py`.
+  Повторный запуск пропускает существующие аккаунты; сбой не мешает api стартовать.
 - **Проекты** ([ADR 0011](adr/0011-projects-api.md)). Изменяющий use case берёт проект с
   блокировкой строки (`get_by_id(for_update=True)`) через `get_member_project_or_raise`:
   не-участник получает тот же `ProjectNotFoundError`, что и для несуществующего проекта.
