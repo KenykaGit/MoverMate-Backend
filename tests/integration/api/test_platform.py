@@ -143,6 +143,28 @@ async def test_request_id_is_echoed_and_logged(client: AsyncClient, log_events: 
     assert len(unsafe.headers["X-Request-ID"]) == 32
 
 
+async def test_access_log_says_who_and_which_error(
+    client: AsyncClient, log_events: LogEvents
+) -> None:
+    """In Sage a request reads as "user john_doe: PUT ... -> 409 username_taken"."""
+    session = await signed_up(client)
+    await register(client, username="taken")
+
+    await client.put(
+        f"{API}/users/me/username", json={"new_username": "taken"}, headers=session.headers
+    )
+    await client.get(f"{API}/users/me", headers=session.headers)
+
+    *_, taken, ok = [e for e in log_events() if e["event"] == "http_request"]
+    assert (taken["status"], taken["error_code"]) == (409, "username_taken")
+    assert (taken["user_id"], taken["username"]) == (session.user_id, "john_doe")
+    assert taken["message"].startswith("user john_doe: PUT /api/v1/users/me/username -> 409")
+    assert "error_code" not in ok  # Sage needs a field to keep one type: no nulls
+    assert ok["message"].startswith("user john_doe: GET /api/v1/users/me -> 200")
+    [created] = [e for e in log_events() if e["event"] == "user_registered"][:1]
+    assert created["username"] == "john_doe"
+
+
 async def test_error_body_carries_the_request_id(client: AsyncClient) -> None:
     response = await client.get(f"{API}/users/me", headers={"X-Request-ID": "trace-401"})
 

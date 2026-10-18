@@ -17,3 +17,8 @@ class Unset(Enum):
 UNSET = Unset.UNSET
 
 type Patch[T] = T | Unset
+
+
+def sent_fields(patch: object, *names: str) -> list[str]:
+    """Which of the named patch fields the client sent (not UNSET): for logs."""
+    return [name for name in names if getattr(patch, name) is not UNSET]

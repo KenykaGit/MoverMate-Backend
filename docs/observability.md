@@ -75,47 +75,73 @@ sum by (outcome) (rate(llm_requests_total{outcome!="ok"}[15m]))             # с
 Логи пишутся в stdout по одной JSON-строке на событие (`LOG_JSON=true`, обязательно в prod).
 Локально удобнее цветной вывод (`LOG_JSON=false`). structlog и stdlib (application, uvicorn,
 SQLAlchemy) проходят через один конвейер. Каждая строка, записанная в рамках запроса,
-содержит `request_id`, а после аутентификации ещё и `user_id`.
+содержит `request_id`, а после аутентификации ещё `user_id` и `username` (текущее имя
+аккаунта из БД, [ADR 0019](adr/0019-readable-audit-logs.md)).
+
+У каждого события из таблицы ниже есть поле `message`: одно предложение о том, кто что
+сделал, собранное из полей события (`app/infrastructure/log_messages.py`). Его показывает
+Sage в списке результатов, поэтому лента логов читается как история действий
+пользователей. Поиск и алерты строятся по `event` и полям, а не по тексту `message`: текст
+можно менять, имена событий и полей — стабильный контракт. Нет шаблона у события —
+unit-тест `test_log_messages.py` упадёт.
 
 ```json
-{"event": "http_request", "method": "PUT", "path": "/api/v1/users/me/username", "route": "/api/v1/users/me/username", "status": 409, "duration_ms": 6.1, "request_id": "f111…", "user_id": "0191…", "level": "info", "logger": "app.access", "timestamp": "…"}
+{"event": "http_request", "message": "user john_doe: PUT /api/v1/users/me/username -> 409 username_taken in 6.1 ms", "method": "PUT", "path": "/api/v1/users/me/username", "route": "/api/v1/users/me/username", "status": 409, "error_code": "username_taken", "duration_ms": 6.1, "request_id": "f111…", "user_id": "0191…", "username": "john_doe", "level": "info", "logger": "app.access", "timestamp": "…"}
+{"event": "project_created", "message": "user john_doe created project \"Moving to Kazan\" with 2 rooms", "project_id": "0192…", "project_name": "Moving to Kazan", "rooms": 2, "request_id": "f112…", "user_id": "0191…", "username": "john_doe", "level": "info", "logger": "app.application.projects.create_project", "timestamp": "…"}
 ```
+
+Почти все события бизнес-логики содержат `user_id` того, кто действовал, и `project_id`.
+Ниже в таблице перечислены остальные поля.
 
 ### События
 
 | Событие | Уровень | Поля | Значение |
 |---|---|---|---|
-| `http_request` | info / warning для 5xx | `method`, `path`, `route`, `status`, `duration_ms` | access-лог, одна строка на запрос |
+| `http_request` | info / warning для 5xx | `method`, `path`, `route`, `status`, `duration_ms`, `error_code` | access-лог, одна строка на запрос; `error_code` — `code` из тела ошибки (только у ответов с ошибкой) |
 | `unhandled_error` | error + traceback | `method`, `path` | непредвиденное исключение → 500 |
-| `user_registered`, `user_logged_in` | info | `user_id` | аудит |
+| `user_registered`, `user_logged_in` | info | `user_id`, `username` | аудит; `username` — имя аккаунта, а не то, что ввели в форму |
 | `user_logged_out` | info | `user_id`, `family_id` | аудит: завершена одна сессия |
 | `password_rehashed` | info | `user_id` | хэш пароля пересчитан с текущими параметрами argon2 при входе |
 | `login_failed` | info | `reason=unknown_login\|wrong_password` | без имени пользователя и пароля: опечатка в поле имени пользователя могла бы оказаться паролем |
 | **`refresh_token_reused`** | **warning** | `user_id`, `family_id`, `token_id` | возможна кража сессии; эта сессия (семья токенов) отозвана, остальные работают |
 | `password_changed`, `user_deleted`, `user_restored` | info | `user_id` | аудит |
+| `username_changed` | info | `user_id`, `username`, `previous_username` | аккаунт переименован (повтор того же имени не пишется) |
 | `test_users_seeded` | info | `created`, `skipped` | `SEED_TEST_USERS=true`: тестовые аккаунты созданы или уже были |
 | `test_users_seed_failed` | error | traceback | заполнение тестовыми данными упало; api всё равно стартует |
-| `project_created` | info | `project_id`, `user_id`, `rooms` | создан проект и `rooms` комнат |
-| `project_rescheduled` | info | `project_id`, `moving_date` | сменились дата переезда или часовой пояс; ожидающие напоминания пересозданы |
-| `project_reminders_changed` | info | `project_id`, `offsets_days` | новый набор напоминаний о переезде (повтор того же набора не пишется) |
-| `project_deleted` | info | `project_id`, `user_id`, `cancelled_notifications` | проект удалён, столько ожидающих уведомлений отменено |
-| **`project_delete_forbidden`** | **warning** | `project_id`, `user_id` | участник, не владелец, пытался удалить проект (403); серия таких событий — ошибка клиента или попытка злоупотребления |
-| `collaborator_added` | info | `project_id`, `user_id`, `collaborator_id` | `user_id` добавил участника (повторное добавление не пишется) |
-| `collaborator_removed`, `project_left` | info | `project_id`, `user_id`, `collaborator_id` | участник убран другим участником / вышел сам; его ожидающие уведомления в проекте отменены |
+| `project_created` | info | `project_name`, `rooms` | создан проект и `rooms` комнат |
+| `project_updated` | info | `project_name`, `fields` | изменены поля проекта; `fields` — какие прислал клиент (`name`, `moving_date`…) |
+| `project_rescheduled` | info | `project_name`, `moving_date` | сменились дата переезда или часовой пояс; ожидающие напоминания пересозданы |
+| `project_reminders_changed` | info | `project_name`, `offsets_days` | новый набор напоминаний о переезде (повтор того же набора не пишется) |
+| `project_deleted` | info | `project_name`, `cancelled_notifications` | проект удалён, столько ожидающих уведомлений отменено |
+| **`project_delete_forbidden`** | **warning** | `project_name` | участник, не владелец, пытался удалить проект (403); серия таких событий — ошибка клиента или попытка злоупотребления |
+| `collaborator_added` | info | `project_name`, `collaborator_id`, `collaborator_username` | `user_id` добавил участника (повторное добавление не пишется) |
+| `collaborator_removed`, `project_left` | info | `project_name`, `collaborator_id` | участник убран другим участником / вышел сам; его ожидающие уведомления в проекте отменены |
+| `room_created` | info | `room_id`, `room_name`, `room_kind` | новая комната старого (`SOURCE`) или нового (`DESTINATION`) жилья |
+| `room_renamed` | info | `room_id`, `room_name`, `previous_name` | комната переименована (повтор того же имени не пишется) |
+| `room_deleted` | info | `room_id`, `room_name` | удалена неиспользуемая комната |
 | `box_created` | info | `box_id`, `number`, `items` | новая коробка; `items` — сколько вещей сразу положили в неё |
-| `box_status_changed` | info | `box_id`, `from_status`, `to_status`, `rollback` | шаг статуса коробки; `rollback=true` — откат на шаг назад |
-| `box_deleted` | info | `box_id`, `items` | коробка удалена вместе с `items` вещами внутри |
-| `item_state_changed` | info | `item_id`, `from_state`, `to_state` | вещь упакована, выложена, потеряна или найдена |
-| `room_deleted` | info | `room_id`, `user_id` | удалена неиспользуемая комната |
+| `box_updated` | info | `box_id`, `number`, `fields` | изменены название, хрупкость или комната назначения |
+| `box_status_changed` | info | `box_id`, `number`, `from_status`, `to_status`, `rollback` | шаг статуса коробки; `rollback=true` — откат на шаг назад |
+| `box_deleted` | info | `box_id`, `number`, `items` | коробка удалена вместе с `items` вещами внутри |
+| `contents_reminder_scheduled` | info | `box_id`, `number`, `notification_id`, `remind_at` | создатель коробки попросил напомнить заполнить её содержимое |
+| `contents_reminder_cancelled` | info | `box_id`, `number` | напоминание о содержимом отменено (если отменять было нечего, не пишется) |
+| `item_created` | info | `item_id`, `item_name`, `quantity`, `in_box` | вещь добавлена в комнату или сразу в коробку |
+| `items_created` | info | `items`, `item_names`, `in_box` | несколько вещей одним запросом (в том числе после сканирования фото) |
+| `item_updated` | info | `item_id`, `item_name`, `fields` | изменены имя, количество, приоритет или комната |
+| `item_deleted` | info | `item_id`, `item_name` | вещь удалена |
+| `item_state_changed` | info | `item_id`, `item_name`, `from_state`, `to_state` | вещь упакована, выложена, потеряна или найдена |
 | `items_scanned` | info | `project_id`, `recognized`, `items` | фото распознано: модель назвала `recognized` позиций, после проверки и объединения осталось `items` |
 | `llm_request_completed` | info | `operation`, `model`, `duration_seconds`, `prompt_tokens`, `completion_tokens`, `items` | успешный вызов модели; токены — для контроля расхода квоты прокси |
 | **`llm_request_failed`** | **warning** | `operation`, `model`, `outcome`, `http_status`, `error`, `duration_seconds` | вызов модели не удался, клиент получил 503 `item_recognition_unavailable`; `outcome` — как в `llm_requests_total`, `error` — начало ответа прокси (до 300 символов) |
-| `task_created` | info | `project_id`, `task_id`, `assignees` | новая задача и число её ответственных |
-| `tasks_created_from_templates` | info | `project_id`, `template_ids` | выбранные шаблоны скопированы в задачи (повтор `id` в запросе копируется один раз) |
-| `task_completed`, `task_reopened` | info | `project_id`, `task_id` | задача выполнена (ожидающие уведомления отменены) / возвращена в работу (напоминания поставлены заново); повтор не пишется |
-| `task_assignees_changed` | info | `task_id`, `added`, `removed` | заменены ответственные; снятые потеряли ожидающие уведомления по задаче |
-| `task_reminders_changed` | info | `task_id`, `offsets_hours` | новый набор напоминаний задачи (повтор того же набора не пишется) |
-| `task_deleted` | info | `project_id`, `task_id`, `user_id` | задача удалена, её ожидающие уведомления отменены |
+| `task_created` | info | `task_id`, `task_title`, `assignees` | новая задача и число её ответственных |
+| `task_updated` | info | `task_id`, `task_title`, `fields`, `rescheduled` | изменены поля задачи; `rescheduled=true` — сдвинут срок, напоминания пересозданы |
+| `tasks_created_from_templates` | info | `template_ids`, `tasks` | выбранные шаблоны скопированы в задачи (повтор `id` в запросе копируется один раз) |
+| `task_completed`, `task_reopened` | info | `task_id`, `task_title` | задача выполнена (ожидающие уведомления отменены) / возвращена в работу (напоминания поставлены заново); повтор не пишется |
+| `task_assignees_changed` | info | `task_id`, `task_title`, `added`, `removed`, `added_count`, `removed_count` | заменены ответственные; снятые потеряли ожидающие уведомления по задаче |
+| `task_reminders_changed` | info | `task_id`, `task_title`, `offsets_hours` | новый набор напоминаний задачи (повтор того же набора не пишется) |
+| `task_deleted` | info | `task_id`, `task_title` | задача удалена, её ожидающие уведомления отменены |
+| `idempotent_replay` | info | `scope` | повтор запроса с тем же `Idempotency-Key`: отдан сохранённый ответ |
+| `startup`, `shutdown` | info | `version` | api запущен / остановлен |
 | `redis_unavailable` | warning | `op`, `error` | операция Redis не удалась, сработал fail-open |
 | `readiness_check_failed` | warning | `dependency`, `error` | зависимость не прошла проверку `/health/ready` |
 | `idempotency_record_corrupted` | warning | ключ | запись в Redis не читается (например, после смены формата) |
@@ -144,7 +170,10 @@ schedule_id deliver_due_notifications.` (каждые 15 с) в `docker compose 
 
 Пароли, токены и хэши никогда не логируются. DTO с секретами помечены `field(repr=False)`,
 в pydantic-схемах используется `SecretStr`. `endpoint` push-подписки тоже секрет (кто его
-знает, может слать push в браузер): события содержат только хост push-сервиса. Ключ
+знает, может слать push в браузер): события содержат только хост push-сервиса.
+`username` берётся только из аккаунта (после аутентификации, регистрации или успешного
+входа): то, что введено в форму входа при неудачной попытке, не логируется. Имена
+проектов, комнат, вещей и задач логируются, адреса, описания задач и фото — нет. Ключ
 LLM-прокси (`LLM__API_KEY`) хранится как `SecretStr`, а фото и ответы модели целиком в логи
 не попадают.
 
@@ -172,7 +201,7 @@ LLM-прокси (`LLM__API_KEY`) хранится как `SecretStr`, а фот
 | `inst` | имя контейнера |
 | `@timestamp` | когда Docker получил строку (UTC) |
 | `level` | `INFO`, `WARN`, `ERROR`, `CRITICAL`…; у nginx — по `status`; нераспознанный уровень — в `level_raw` |
-| `message` | текст: `event` для structlog, строка целиком для не-JSON |
+| `message` | текст: предложение из `log_messages.py` для событий api и worker («user alice created project …»), иначе `event`; строка целиком для не-JSON |
 | `version` | тег образа: git sha для приложения |
 | `stream` | `stdout` или `stderr` |
 
@@ -180,6 +209,9 @@ LLM-прокси (`LLM__API_KEY`) хранится как `SecretStr`, а фот
 
 ```text
 group="hack-led-12" request_id="f111…"                        # запрос целиком: nginx и api
+group="hack-led-12" system="api" username="alice"             # всё, что делал пользователь
+group="hack-led-12" system="api" project_id="0192…"           # история проекта
+group="hack-led-12" system="api" event="http_request" status=409 # отказы бизнес-правил (error_code)
 group="hack-led-12" system="api" level="ERROR"                # 500 и необработанные ошибки
 group="hack-led-12" system="api" event="refresh_token_reused" # возможная кража сессии
 group="hack-led-12" system="worker" outcome="FAILED"          # уведомления, ушедшие в FAILED

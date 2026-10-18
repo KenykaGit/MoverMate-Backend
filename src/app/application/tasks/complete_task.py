@@ -63,6 +63,11 @@ class CompleteTask:
         if completed:
             logger.info(
                 "task_completed",
-                extra={"project_id": str(task.project_id), "task_id": str(task.id)},
+                extra={
+                    "project_id": str(task.project_id),
+                    "task_id": str(task.id),
+                    "task_title": task.title.value,
+                    "user_id": str(data.user_id),
+                },
             )
         return view

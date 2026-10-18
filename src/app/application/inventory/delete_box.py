@@ -58,4 +58,13 @@ class DeleteBox:
         )
         await self._uow.commit()
 
-        logger.info("box_deleted", extra={"box_id": str(box.id), "items": deleted_items})
+        logger.info(
+            "box_deleted",
+            extra={
+                "project_id": str(box.project_id),
+                "box_id": str(box.id),
+                "number": box.number.value,
+                "items": deleted_items,
+                "user_id": str(data.user_id),
+            },
+        )

@@ -68,7 +68,10 @@ class SetTaskReminders:
             logger.info(
                 "task_reminders_changed",
                 extra={
+                    "project_id": str(task.project_id),
                     "task_id": str(task.id),
+                    "task_title": task.title.value,
+                    "user_id": str(data.user_id),
                     "offsets_hours": sorted(offset.hours for offset in task.reminders),
                 },
             )

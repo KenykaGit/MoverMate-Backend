@@ -50,6 +50,7 @@ class RemoveCollaborator:
             event,
             extra={
                 "project_id": str(project.id),
+                "project_name": project.name.value,
                 "user_id": str(data.user_id),
                 "collaborator_id": str(collaborator_id),
             },

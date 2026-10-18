@@ -92,6 +92,8 @@ class CreateTask:
             extra={
                 "project_id": str(project.id),
                 "task_id": str(task.id),
+                "task_title": task.title.value,
+                "user_id": str(data.user_id),
                 "assignees": len(task.assignee_ids),
             },
         )

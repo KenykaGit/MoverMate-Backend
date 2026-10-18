@@ -1,9 +1,13 @@
+import logging
+
 from app.application.common.uow import AbstractUnitOfWork
 from app.application.interfaces.project_repository import AbstractProjectRepository
 from app.application.interfaces.room_repository import AbstractRoomRepository
 from app.application.inventory.dto import RenameRoomDTO, RoomDTO
 from app.application.inventory.lookup import room_of_member
 from app.domain.inventory.value_objects import RoomName
+
+logger = logging.getLogger(__name__)
 
 
 class RenameRoom:
@@ -28,7 +32,20 @@ class RenameRoom:
         name = RoomName(data.name)
         room = await room_of_member(self._rooms, self._projects, data.room_id, data.user_id)
 
+        previous = room.name
         room.rename(name)
         await self._rooms.update(room)
         await self._uow.commit()
+
+        if previous != room.name:
+            logger.info(
+                "room_renamed",
+                extra={
+                    "project_id": str(room.project_id),
+                    "room_id": str(room.id),
+                    "room_name": room.name.value,
+                    "previous_name": previous.value,
+                    "user_id": str(data.user_id),
+                },
+            )
         return RoomDTO.from_entity(room)

@@ -1,4 +1,6 @@
-from app.application.common.patch import UNSET
+import logging
+
+from app.application.common.patch import UNSET, sent_fields
 from app.application.common.uow import AbstractUnitOfWork
 from app.application.interfaces.item_repository import AbstractItemRepository
 from app.application.interfaces.project_repository import AbstractProjectRepository
@@ -7,6 +9,8 @@ from app.application.inventory.dto import ItemDTO, UpdateItemDTO
 from app.application.inventory.lookup import item_of_member, item_views, room_in_project
 from app.application.inventory.read_model import AbstractInventoryReadModel
 from app.domain.inventory.value_objects import ItemName, Quantity
+
+logger = logging.getLogger(__name__)
 
 
 class UpdateItem:
@@ -50,4 +54,17 @@ class UpdateItem:
         await self._items.update(item)
         (view,) = await item_views(self._read_model, [item.id])
         await self._uow.commit()
+
+        fields = sent_fields(data, "name", "quantity", "priority", "source_room_id")
+        if fields:
+            logger.info(
+                "item_updated",
+                extra={
+                    "project_id": str(item.project_id),
+                    "item_id": str(item.id),
+                    "item_name": item.name.value,
+                    "user_id": str(data.user_id),
+                    "fields": fields,
+                },
+            )
         return view

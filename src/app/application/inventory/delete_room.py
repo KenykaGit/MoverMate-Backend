@@ -36,4 +36,12 @@ class DeleteRoom:
         await self._rooms.update(room)
         await self._uow.commit()
 
-        logger.info("room_deleted", extra={"room_id": str(room.id), "user_id": str(data.user_id)})
+        logger.info(
+            "room_deleted",
+            extra={
+                "project_id": str(room.project_id),
+                "room_id": str(room.id),
+                "room_name": room.name.value,
+                "user_id": str(data.user_id),
+            },
+        )

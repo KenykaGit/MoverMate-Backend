@@ -89,7 +89,12 @@ class CreateProject:
 
         logger.info(
             "project_created",
-            extra={"project_id": str(project.id), "user_id": str(owner_id), "rooms": len(rooms)},
+            extra={
+                "project_id": str(project.id),
+                "project_name": project.name.value,
+                "user_id": str(owner_id),
+                "rooms": len(rooms),
+            },
         )
         return await read_project_or_raise(self._reader, project.id, owner_id)
 

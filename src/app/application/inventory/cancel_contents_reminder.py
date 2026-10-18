@@ -1,3 +1,5 @@
+import logging
+
 from app.application.common.uow import AbstractUnitOfWork
 from app.application.exceptions import NotBoxCreatorError
 from app.application.interfaces.box_repository import AbstractBoxRepository
@@ -5,6 +7,8 @@ from app.application.interfaces.notification_repository import AbstractNotificat
 from app.application.interfaces.project_repository import AbstractProjectRepository
 from app.application.inventory.dto import CancelContentsReminderDTO
 from app.application.inventory.lookup import box_of_member
+
+logger = logging.getLogger(__name__)
 
 
 class CancelContentsReminder:
@@ -31,5 +35,16 @@ class CancelContentsReminder:
         if box.created_by != data.user_id:
             raise NotBoxCreatorError("Only the creator of the box cancels its contents reminder")
 
-        await self._notifications.cancel_pending_for_box(box.id)
+        cancelled = await self._notifications.cancel_pending_for_box(box.id)
         await self._uow.commit()
+
+        if cancelled:
+            logger.info(
+                "contents_reminder_cancelled",
+                extra={
+                    "project_id": str(box.project_id),
+                    "box_id": str(box.id),
+                    "number": box.number.value,
+                    "user_id": str(data.user_id),
+                },
+            )

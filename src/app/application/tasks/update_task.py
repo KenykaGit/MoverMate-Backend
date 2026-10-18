@@ -1,5 +1,7 @@
+import logging
+
 from app.application.common.clock import utc_now
-from app.application.common.patch import UNSET
+from app.application.common.patch import UNSET, sent_fields
 from app.application.common.uow import AbstractUnitOfWork
 from app.application.interfaces.project_repository import AbstractProjectRepository
 from app.application.interfaces.task_repository import AbstractTaskRepository
@@ -8,6 +10,8 @@ from app.application.tasks.lookup import task_of_member, task_view
 from app.application.tasks.read_model import AbstractTaskReadModel
 from app.application.tasks.services import TaskNotifier
 from app.domain.tasks.value_objects import TaskDescription, TaskTitle
+
+logger = logging.getLogger(__name__)
 
 
 class UpdateTask:
@@ -60,4 +64,18 @@ class UpdateTask:
             await self._notifier.reschedule_reminders(task, now=utc_now())
         view = await task_view(self._read_model, task.id)
         await self._uow.commit()
+
+        fields = sent_fields(data, "title", "description", "phase", "due_at")
+        if fields:
+            logger.info(
+                "task_updated",
+                extra={
+                    "project_id": str(task.project_id),
+                    "task_id": str(task.id),
+                    "task_title": task.title.value,
+                    "user_id": str(data.user_id),
+                    "fields": fields,
+                    "rescheduled": rescheduled,
+                },
+            )
         return view

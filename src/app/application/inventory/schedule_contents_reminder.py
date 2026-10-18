@@ -1,3 +1,5 @@
+import logging
+
 from app.application.common.clock import utc_now
 from app.application.common.uow import AbstractUnitOfWork
 from app.application.exceptions import (
@@ -14,6 +16,8 @@ from app.application.inventory.read_model import AbstractInventoryReadModel
 from app.domain.common.ids import UserId
 from app.domain.inventory.box import BoxStatus
 from app.domain.notifications.notification import BoxContentsReminder, Notification
+
+logger = logging.getLogger(__name__)
 
 
 class ScheduleContentsReminder:
@@ -59,4 +63,16 @@ class ScheduleContentsReminder:
         await self._notifications.add(reminder)
         view = await box_view(self._read_model, box.id, data.user_id)
         await self._uow.commit()
+
+        logger.info(
+            "contents_reminder_scheduled",
+            extra={
+                "project_id": str(box.project_id),
+                "box_id": str(box.id),
+                "number": box.number.value,
+                "notification_id": str(reminder.id),
+                "remind_at": reminder.scheduled_at.isoformat(),
+                "user_id": str(data.user_id),
+            },
+        )
         return view

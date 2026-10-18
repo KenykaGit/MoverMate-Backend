@@ -76,7 +76,10 @@ class ChangeBoxStatus:
             logger.info(
                 "box_status_changed",
                 extra={
+                    "project_id": str(box.project_id),
                     "box_id": str(box.id),
+                    "number": box.number.value,
+                    "user_id": str(data.user_id),
                     "from_status": change.from_status,
                     "to_status": change.to_status,
                     "rollback": change.is_rollback,

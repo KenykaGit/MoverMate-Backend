@@ -100,6 +100,12 @@ class CreateBox:
 
         logger.info(
             "box_created",
-            extra={"box_id": str(box.id), "number": box.number.value, "items": len(items)},
+            extra={
+                "project_id": str(box.project_id),
+                "box_id": str(box.id),
+                "number": box.number.value,
+                "items": len(items),
+                "user_id": str(data.user_id),
+            },
         )
         return view

@@ -89,6 +89,9 @@ from app.presentation.http.schemas.common import ErrorBody, ErrorDetail, ErrorRe
 
 logger = structlog.get_logger(__name__)
 
+# Request state key under which error_response leaves the `code` for the access log.
+ERROR_CODE_STATE = "error_code"
+
 REQUEST_ID_HEADER = "X-Request-ID"
 _UNAUTHORIZED_HEADERS = {"WWW-Authenticate": "Bearer"}
 
@@ -232,6 +235,8 @@ def error_response(
     details: list[ErrorDetail] | None = None,
     headers: Mapping[str, str] | None = None,
 ) -> JSONResponse:
+    # The access log of the request names the error, not just the status.
+    request.scope.setdefault("state", {})[ERROR_CODE_STATE] = code
     body = ErrorResponse(
         error=ErrorBody(
             code=code,

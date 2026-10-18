@@ -1,3 +1,5 @@
+import logging
+
 from app.application.common.membership import project_of_member
 from app.application.common.uow import AbstractUnitOfWork
 from app.application.interfaces.box_repository import AbstractBoxRepository
@@ -8,6 +10,8 @@ from app.application.inventory.dto import CreateItemDTO, ItemDTO, NewItemEntryDT
 from app.application.inventory.lookup import box_in_project, item_views, room_in_project
 from app.application.inventory.read_model import AbstractInventoryReadModel
 from app.application.inventory.services import build_items
+
+logger = logging.getLogger(__name__)
 
 
 class CreateItem:
@@ -54,4 +58,16 @@ class CreateItem:
         await self._items.add_many([item])
         (view,) = await item_views(self._read_model, [item.id])
         await self._uow.commit()
+
+        logger.info(
+            "item_created",
+            extra={
+                "project_id": str(project.id),
+                "item_id": str(item.id),
+                "item_name": item.name.value,
+                "quantity": item.quantity.value,
+                "in_box": box is not None,
+                "user_id": str(data.user_id),
+            },
+        )
         return view

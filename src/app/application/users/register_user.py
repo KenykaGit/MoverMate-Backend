@@ -44,5 +44,8 @@ class RegisterUser:
         await self._user_repository.add(user)
         await self._uow.commit()
 
-        logger.info("user_registered", extra={"user_id": str(user.id)})
+        logger.info(
+            "user_registered",
+            extra={"user_id": str(user.id), "username": user.username.value},
+        )
         return UserDTO.from_entity(user)

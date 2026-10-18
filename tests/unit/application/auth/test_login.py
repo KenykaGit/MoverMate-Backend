@@ -171,8 +171,11 @@ async def test_audit_events_never_contain_credentials(login: Login, log_events: 
     events = log_events()
     reasons = [e["reason"] for e in events if e["event"] == "login_failed"]
     assert reasons == ["wrong_password", "unknown_login"]
-    assert [e["event"] for e in events].count("user_logged_in") == 1
-    text = str(events)
-    assert "john_doe" not in text
-    assert "nobody" not in text
-    assert "password" not in text.replace("wrong_password", "")
+    [logged_in] = [e for e in events if e["event"] == "user_logged_in"]
+    # A failed attempt never shows what was typed (a password in the wrong field)...
+    failures = str([e for e in events if e["event"] == "login_failed"])
+    assert "john_doe" not in failures
+    assert "nobody" not in failures
+    # ...a success names the account it matched.
+    assert logged_in["username"] == "john_doe"
+    assert "password" not in str(events).replace("wrong_password", "")

@@ -152,7 +152,7 @@ tests/
 | Безопасное добавление изменений | обязательная стадия `check` в [.gitlab-ci.yml](.gitlab-ci.yml), pre-commit с unit-тестами, `make check`; 400+ тестов в [tests/](tests/) |
 | Выпуск изменений и обновление схемы | [docs/release.md](docs/release.md) (путь до прода, откат, обновление версий), [ADR 0005](docs/adr/0005-migrations.md), [migrations/](migrations/), сервис `migrate` и job `deploy` |
 | Модель данных и переходы состояний | [состояния и переходы](docs/architecture.md#состояния-и-переходы), [сущности](src/app/domain/), ограничения БД в [0001_initial.py](migrations/versions/0001_initial.py), [ADR 0007](docs/adr/0007-authentication-and-sessions.md), [ADR 0008](docs/adr/0008-soft-delete-and-savepoints.md), [test_migrations.py](tests/integration/migrations/test_migrations.py) |
-| Наблюдаемость и диагностика | [docs/observability.md](docs/observability.md), `/health/live`, `/health/ready` (`degraded`, в том числе при отставании очереди уведомлений), `/metrics`, JSON-логи api и nginx со сквозным `request_id`, логи прода в Sage ([ADR 0017](docs/adr/0017-logs-in-sage.md)), healthcheck воркера |
+| Наблюдаемость и диагностика | [docs/observability.md](docs/observability.md), `/health/live`, `/health/ready` (`degraded`, в том числе при отставании очереди уведомлений), `/metrics`, JSON-логи api и nginx со сквозным `request_id`, логи прода в Sage ([ADR 0017](docs/adr/0017-logs-in-sage.md)) с `username` и читаемым `message` на каждое действие пользователя ([ADR 0019](docs/adr/0019-readable-audit-logs.md)), healthcheck воркера |
 | Проверка бизнес-логики и контрактов | [tests/unit](tests/unit) (домен, use cases на фейках, контракты), [tests/integration](tests/integration) (Postgres, Redis, отказ Redis, E2E) |
 
 ## Использование ИИ

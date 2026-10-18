@@ -59,6 +59,8 @@ class SetProjectReminders:
                 "project_reminders_changed",
                 extra={
                     "project_id": str(project.id),
+                    "project_name": project.name.value,
+                    "user_id": str(data.user_id),
                     "offsets_days": sorted(offset.days for offset in project.moving_reminders),
                 },
             )

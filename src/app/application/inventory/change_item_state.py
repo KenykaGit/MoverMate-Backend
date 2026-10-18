@@ -61,7 +61,10 @@ class ChangeItemState:
             logger.info(
                 "item_state_changed",
                 extra={
+                    "project_id": str(item.project_id),
                     "item_id": str(item.id),
+                    "item_name": item.name.value,
+                    "user_id": str(data.user_id),
                     "from_state": change.from_state,
                     "to_state": change.to_state,
                 },

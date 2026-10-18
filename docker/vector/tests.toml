@@ -36,6 +36,30 @@ assert!(!exists(.image))
 '''
 
 [[tests]]
+name = "the app's readable message is kept, not replaced by the event name"
+
+[[tests.inputs]]
+insert_at = "sage_event"
+type = "log"
+[tests.inputs.log_fields]
+message = '{"event": "project_created", "message": "user alice created project \"Дача\" with 2 rooms", "username": "alice", "level": "info"}'
+container_name = "/backend-api-1"
+image = "registry.example.com/team/backend:b83ead4"
+stream = "stdout"
+"label.\"com.docker.compose.service\"" = "api"
+
+[[tests.outputs]]
+extract_from = "sage_event"
+[[tests.outputs.conditions]]
+type = "vrl"
+source = '''
+assert_eq!(.event, "project_created")
+assert_eq!(.message, "user alice created project \"Дача\" with 2 rooms")
+assert_eq!(.username, "alice")
+assert_eq!(.level, "INFO")
+'''
+
+[[tests]]
 name = "nginx access log gets a level from the status code"
 
 [[tests.inputs]]

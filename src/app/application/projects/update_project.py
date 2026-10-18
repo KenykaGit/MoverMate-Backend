@@ -2,7 +2,7 @@ import logging
 
 from app.application.common.clock import utc_now
 from app.application.common.membership import project_of_member
-from app.application.common.patch import UNSET
+from app.application.common.patch import UNSET, sent_fields
 from app.application.common.uow import AbstractUnitOfWork
 from app.application.interfaces.project_reader import AbstractProjectReader, ProjectDTO
 from app.application.interfaces.project_repository import AbstractProjectRepository
@@ -64,10 +64,33 @@ class UpdateProject:
             await self._reminders.reschedule_all(project, now=utc_now())
         await self._uow.commit()
 
+        fields = sent_fields(
+            data,
+            "name",
+            "moving_date",
+            "time_zone",
+            "qr_code_strategy",
+            "origin_address",
+            "destination_address",
+        )
+        if fields:
+            logger.info(
+                "project_updated",
+                extra={
+                    "project_id": str(project.id),
+                    "project_name": project.name.value,
+                    "user_id": str(data.user_id),
+                    "fields": fields,
+                },
+            )
         if rescheduled:
             logger.info(
                 "project_rescheduled",
-                extra={"project_id": str(project.id), "moving_date": str(project.moving_date)},
+                extra={
+                    "project_id": str(project.id),
+                    "project_name": project.name.value,
+                    "moving_date": str(project.moving_date),
+                },
             )
         return await read_project_or_raise(self._reader, project.id, data.user_id)
 

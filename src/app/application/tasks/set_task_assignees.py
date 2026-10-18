@@ -69,7 +69,12 @@ class SetTaskAssignees:
             logger.info(
                 "task_assignees_changed",
                 extra={
+                    "project_id": str(task.project_id),
                     "task_id": str(task.id),
+                    "task_title": task.title.value,
+                    "user_id": str(data.user_id),
+                    "added_count": len(added),
+                    "removed_count": len(removed),
                     "added": sorted(str(user_id) for user_id in added),
                     "removed": sorted(str(user_id) for user_id in removed),
                 },

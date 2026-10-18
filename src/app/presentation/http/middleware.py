@@ -10,7 +10,7 @@ from starlette.requests import Request
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from app.infrastructure.metrics.prometheus import observe_http_request
-from app.presentation.http.errors import REQUEST_ID_HEADER
+from app.presentation.http.errors import ERROR_CODE_STATE, REQUEST_ID_HEADER
 
 logger = structlog.get_logger("app.access")
 
@@ -89,6 +89,8 @@ class RequestContextMiddleware:
                 method=scope["method"], route=route, status=status_code, duration=duration
             )
             log = logger.warning if status_code >= 500 else logger.info  # noqa: PLR2004
+            # Present only on error responses: Sage rejects a field whose type changes.
+            error_code = scope["state"].get(ERROR_CODE_STATE)
             log(
                 "http_request",
                 method=scope["method"],
@@ -96,4 +98,5 @@ class RequestContextMiddleware:
                 route=route,
                 status=status_code,
                 duration_ms=round(duration * 1000, 2),
+                **({"error_code": error_code} if error_code else {}),
             )

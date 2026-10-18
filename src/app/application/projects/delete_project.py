@@ -40,7 +40,11 @@ class DeleteProject:
         except NotProjectOwnerError:
             logger.warning(
                 "project_delete_forbidden",
-                extra={"project_id": str(project.id), "user_id": str(data.user_id)},
+                extra={
+                    "project_id": str(project.id),
+                    "project_name": project.name.value,
+                    "user_id": str(data.user_id),
+                },
             )
             raise
         await self._projects.update(project)
@@ -51,6 +55,7 @@ class DeleteProject:
             "project_deleted",
             extra={
                 "project_id": str(project.id),
+                "project_name": project.name.value,
                 "user_id": str(data.user_id),
                 "cancelled_notifications": cancelled,
             },

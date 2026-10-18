@@ -34,5 +34,7 @@ class Login:
         )
         await self._uow.commit()
 
-        logger.info("user_logged_in", extra={"user_id": str(user.id)})
+        logger.info(
+            "user_logged_in", extra={"user_id": str(user.id), "username": user.username.value}
+        )
         return tokens

@@ -71,6 +71,11 @@ class CreateTasksFromTemplates:
         await self._uow.commit()
         logger.info(
             "tasks_created_from_templates",
-            extra={"project_id": str(project.id), "template_ids": chosen},
+            extra={
+                "project_id": str(project.id),
+                "template_ids": chosen,
+                "tasks": len(tasks),
+                "user_id": str(data.user_id),
+            },
         )
         return views

@@ -42,6 +42,7 @@ class DeleteTask:
             extra={
                 "project_id": str(task.project_id),
                 "task_id": str(task.id),
+                "task_title": task.title.value,
                 "user_id": str(data.user_id),
             },
         )

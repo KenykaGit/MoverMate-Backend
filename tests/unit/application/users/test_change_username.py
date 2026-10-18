@@ -6,6 +6,7 @@ from app.application.users.dto import ChangeUsernameDTO
 from app.domain.users.entity import User
 from app.domain.users.errors import InvalidUsernameError
 from app.domain.users.value_objects import Username
+from tests.conftest import LogEvents
 from tests.factories import make_user
 from tests.fakes import FakePasswordHasher, FakeUnitOfWork, InMemoryUserRepository
 
@@ -31,6 +32,16 @@ class TestChangeUsername:
 
         assert result.username == "new_name"
         assert users.users[user.id].username == Username("new_name")
+
+    async def test_logs_old_and_new_username(
+        self, change: ChangeUsername, user: User, log_events: LogEvents
+    ) -> None:
+        old = user.username.value
+        await change(ChangeUsernameDTO(user_id=user.id, new_username="New_Name"))
+        await change(ChangeUsernameDTO(user_id=user.id, new_username="new_name"))
+
+        [event] = [e for e in log_events() if e["event"] == "username_changed"]
+        assert (event["previous_username"], event["username"]) == (old, "new_name")
 
     async def test_rejects_taken_username(
         self, change: ChangeUsername, users: InMemoryUserRepository, user: User

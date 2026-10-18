@@ -15,6 +15,15 @@ bearer_scheme = HTTPBearer(
 )
 
 
+def bind_user_to_logs(user: UserDTO) -> None:
+    """Every later line of this request says who made it (`user_id`, `username`).
+
+    The username is the account's current one, read from the database: never
+    what a client typed into a login form (that may be a mistyped password).
+    """
+    structlog.contextvars.bind_contextvars(user_id=str(user.id), username=user.username)
+
+
 @inject
 async def get_current_user(
     authenticate: FromDishka[AuthenticateUser],
@@ -25,7 +34,7 @@ async def get_current_user(
     if credentials is None:
         raise NotAuthenticatedError
     user = await authenticate(credentials.credentials)
-    structlog.contextvars.bind_contextvars(user_id=str(user.id))
+    bind_user_to_logs(user)
     return user
 
 
@@ -39,7 +48,7 @@ async def get_optional_user(
     if credentials is None:
         return None
     user = await authenticate(credentials.credentials)
-    structlog.contextvars.bind_contextvars(user_id=str(user.id))
+    bind_user_to_logs(user)
     return user
 
 

@@ -1,4 +1,6 @@
-from app.application.common.patch import UNSET
+import logging
+
+from app.application.common.patch import UNSET, sent_fields
 from app.application.common.uow import AbstractUnitOfWork
 from app.application.interfaces.box_repository import AbstractBoxRepository
 from app.application.interfaces.project_repository import AbstractProjectRepository
@@ -7,6 +9,8 @@ from app.application.inventory.dto import BoxDTO, UpdateBoxDTO
 from app.application.inventory.lookup import box_of_member, box_view, room_in_project
 from app.application.inventory.read_model import AbstractInventoryReadModel
 from app.domain.inventory.value_objects import BoxTitle
+
+logger = logging.getLogger(__name__)
 
 
 class UpdateBox:
@@ -48,4 +52,17 @@ class UpdateBox:
         await self._boxes.update(box)
         view = await box_view(self._read_model, box.id, data.user_id)
         await self._uow.commit()
+
+        fields = sent_fields(data, "title", "is_fragile", "destination_room_id")
+        if fields:
+            logger.info(
+                "box_updated",
+                extra={
+                    "project_id": str(box.project_id),
+                    "box_id": str(box.id),
+                    "number": box.number.value,
+                    "user_id": str(data.user_id),
+                    "fields": fields,
+                },
+            )
         return view

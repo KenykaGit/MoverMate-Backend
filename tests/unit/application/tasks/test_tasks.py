@@ -41,6 +41,7 @@ from app.domain.tasks.errors import (
     ReminderWithoutDueDateError,
 )
 from app.domain.tasks.value_objects import TaskPhase
+from tests.conftest import LogEvents
 from tests.unit.application.tasks.conftest import TEMPLATES, Preset, in_hours, new_preset
 
 ASSIGNED, REMINDER = "TASK_ASSIGNED", "TASK_REMINDER"
@@ -230,6 +231,21 @@ class TestUpdate:
             TaskPhase.AFTER,
             "Keep me",
         )
+
+    async def test_logs_the_sent_fields(self, preset: Preset, log_events: LogEvents) -> None:
+        task = await preset.task()
+
+        await preset.make(UpdateTask)(
+            UpdateTaskDTO(user_id=preset.member.id, task_id=task.id, title="Renamed")
+        )
+
+        [event] = [e for e in log_events() if e["event"] == "task_updated"]
+        assert (event["task_title"], event["fields"], event["rescheduled"]) == (
+            "Renamed",
+            ["title"],
+            False,
+        )
+        assert event["user_id"] == str(preset.member.id)
 
     async def test_new_due_time_moves_pending_reminders(self, preset: Preset) -> None:
         task = await preset.task(
