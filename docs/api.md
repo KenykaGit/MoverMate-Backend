@@ -86,7 +86,7 @@
 
 `POST /api/v1/projects/{project_id}/items/scan` (`scanItems`): пользователь фотографирует
 вещи, модель (`openrouter/claude-haiku-5-5` через LLM-прокси Spirit) возвращает их названия
-и количество. Решения — в [ADR 0013](adr/0013-photo-scanning-with-llm.md).
+и количество. Решения — в [ADR 0015](adr/0015-photo-scanning-with-llm.md).
 
 - **Запрос:** тело — само изображение, `Content-Type` — его тип: `image/jpeg`, `image/png`,
   `image/webp` или `image/gif`. Multipart и base64 не нужны: в браузере
@@ -111,7 +111,7 @@
 Только чтение: обзор, прогресс и этикетки по всему проекту (раздел 10
 [api-endpoints.md](../api-endpoints.md)). Списки коробок и вещей постраничные, поэтому
 счётчики считает сервер. Доступ — любому участнику, иначе 404 `project_not_found`. Решения —
-в [ADR 0012](adr/0012-summaries-read-model.md).
+в [ADR 0014](adr/0014-summaries-read-model.md).
 
 | Метод | Путь (`/api/v1`) | operationId | Успех | Ошибки |
 |---|---|---|---|---|
@@ -147,7 +147,7 @@
 План переезда (раздел 8 [api-endpoints.md](../api-endpoints.md)). Задачи проекта видит и
 меняет любой участник, для остальных их нет: 404 `project_not_found` или `task_not_found`.
 Шаблоны — общий для всех каталог в файле, нужен только вход. Решения — в
-[ADR 0013](adr/0013-tasks-and-templates.md).
+[ADR 0016](adr/0016-tasks-and-templates.md).
 
 | Метод | Путь (`/api/v1`) | operationId | Успех | Ошибки |
 |---|---|---|---|---|
@@ -291,7 +291,7 @@
 
 ## Проекты
 
-Решения и альтернативы — в [ADR 0010](adr/0010-projects-api.md).
+Решения и альтернативы — в [ADR 0011](adr/0011-projects-api.md).
 
 - **Доступ.** Все операции доступны только участникам. Не-участник получает 404
   `project_not_found`, как и для несуществующего или удалённого проекта: существование чужого
@@ -326,7 +326,7 @@
 ## Web Push
 
 Уведомления (назначение на задачу, срок задачи, опись коробки, дата переезда) отправляет
-воркер ([ADR 0011](adr/0011-notification-worker.md)), API только регистрирует браузеры.
+воркер ([ADR 0012](adr/0012-notification-worker.md)), API только регистрирует браузеры.
 
 - **`GET /push/vapid-public-key`** → `{"public_key": "..."}`: `applicationServerKey` для
   `pushManager.subscribe()` (base64url, P-256). Без аутентификации, ключ стабилен.

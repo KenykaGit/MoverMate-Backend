@@ -28,7 +28,7 @@ api, worker ── общий том vapid: ключ VAPID (api отдаёт п�
   том, который читает nginx ([ADR 0009](adr/0009-tls-letsencrypt-certbot.md)). Сервис нужен
   только в проде.
 - **scheduler** и **worker** — тот же образ, команды taskiq
-  ([ADR 0011](adr/0011-notification-worker.md)). `scheduler` каждые 15 с кладёт в Redis сигнал
+  ([ADR 0012](adr/0012-notification-worker.md)). `scheduler` каждые 15 с кладёт в Redis сигнал
   `deliver_due_notifications`; он должен быть один. `worker` по сигналу отправляет созревшие
   уведомления из таблицы `notifications` через Web Push. Очередь и источник истины — таблица,
   сообщение в Redis лишь будит воркер. Портов сервисы не публикуют; `worker` наружу ходит только
@@ -44,7 +44,7 @@ api, worker ── общий том vapid: ключ VAPID (api отдаёт п�
   называется Redis: это имя протокола и клиента `redis-py`.
 - **LLM-прокси Spirit** — внешний OpenAI-совместимый API (`POST /v1/chat/completions`),
   через который api отправляет фото vision-модели `openrouter/claude-haiku-5-5`
-  ([ADR 0013](adr/0013-photo-scanning-with-llm.md)). Это вспомогательная зависимость: при её
+  ([ADR 0015](adr/0015-photo-scanning-with-llm.md)). Это вспомогательная зависимость: при её
   отказе только `scanItems` отвечает 503, `/health/ready` показывает `llm: degraded`. Без
   `LLM__API_KEY` сканирование выключено. Для этого маршрута nginx пропускает тело до 6 МБ
   и ждёт ответа до 45 с, для остальных — 1 МБ и 30 с.
@@ -110,7 +110,7 @@ api, worker ── общий том vapid: ключ VAPID (api отдаёт п�
   (коробка с комнатой, создателем и превью содержимого), и собирать их из агрегатов значило
   бы делать запрос на каждый объект. Use cases меняют данные через репозитории, а отдают ответ
   через read model, который возвращает готовые DTO за несколько запросов на страницу
-  ([ADR 0011](adr/0011-inventory-read-model.md)). Порт возвращает DTO фичи, поэтому лежит в
+  ([ADR 0013](adr/0013-inventory-read-model.md)). Порт возвращает DTO фичи, поэтому лежит в
   ней, а не в `interfaces/` (общие части application фичи не импортируют).
 - `application/common` — общие механизмы без бизнес-смысла: часы, UoW, пагинация по offset
   (`PageRequest`/`Page`) и по курсору (`CursorPageRequest`/`CursorPage`), маркер `UNSET`
@@ -119,21 +119,21 @@ api, worker ── общий том vapid: ключ VAPID (api отдаёт п�
   независимы. Исключений два: `auth` использует `users` (`AuthenticateUser` вызывает
   `GetUser`), а `summaries` использует `inventory` (проверку участия и DTO ссылок на комнаты и
   коробки).
-- **Проекты** ([ADR 0010](adr/0010-projects-api.md)). Изменяющий use case берёт проект с
+- **Проекты** ([ADR 0011](adr/0011-projects-api.md)). Изменяющий use case берёт проект с
   блокировкой строки (`get_by_id(for_update=True)`) через `get_member_project_or_raise`:
   не-участник получает тот же `ProjectNotFoundError`, что и для несуществующего проекта.
   Изменения идут через агрегат и репозиторий, ответ после коммита читает
   `AbstractProjectReader` (username владельца, `created_at`/`updated_at` из БД).
   Напоминания о переезде (`MovingReminderScheduler`) ставятся в outbox `notifications` в той
   же транзакции на 09:00 по `time_zone` проекта.
-- **Уведомления** ([ADR 0011](adr/0011-notification-worker.md)). Подписки браузеров ведут
+- **Уведомления** ([ADR 0012](adr/0012-notification-worker.md)). Подписки браузеров ведут
   `SubscribeToPush` (upsert по `endpoint`) и `UnsubscribeFromPush`. Отправку выполняет
   `DeliverNextNotification`, его вызывает воркер, а не HTTP.
 - `inventory` проверяет участие в проекте через порт проектов. Для чтения не-участнику
   отвечает 404 того объекта, который он просил, а не 403. Порты проектов, уведомлений и
   журнала (`AbstractProjectRepository`, `AbstractNotificationRepository`, `AbstractAuditLog`)
   пока содержат только то, что нужно инвентарю.
-- **Сводки** ([ADR 0012](adr/0012-summaries-read-model.md)). Use cases `summaries`
+- **Сводки** ([ADR 0014](adr/0014-summaries-read-model.md)). Use cases `summaries`
   (`GetProjectSummary`, `GetLoadingChecklist`, `GetUnpackingProgress`, `GetBoxLabels`)
   проверяют участие через `project_of_member` и читают `AbstractSummaryReadModel`. Агрегаты
   считает SQL, по одному выражению на ответ, а правило «комната погружена» лежит в домене

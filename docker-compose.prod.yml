@@ -83,7 +83,7 @@ services:
     restart: unless-stopped
 
   # Sends due notifications (Web Push) from the notifications table; no ports.
-  # Woken up through the Redis queue by `scheduler` (taskiq, ADR 0011).
+  # Woken up through the Redis queue by `scheduler` (taskiq, ADR 0012).
   worker:
     <<: *app
     command: ["taskiq", "worker", "app.worker.entry:broker", "--no-configure-logging", "--workers", "1", "--wait-tasks-timeout", "30"]

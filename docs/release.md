@@ -25,7 +25,7 @@ commit ─▶ MR ─▶ check (параллельно) ─▶ build ─▶ merge
       контейнеров (у `scheduler` его нет: ждётся запуск). Старый `worker` получает SIGTERM,
       taskiq ждёт текущую задачу до 30 с (`--wait-tasks-timeout`, `stop_grace_period: 35s`);
       уведомление, прерванное до коммита, остаётся `PENDING` и уйдёт с новым воркером
-      ([ADR 0011](adr/0011-notification-worker.md)). Сигналы, поставленные `scheduler`, пока
+      ([ADR 0012](adr/0012-notification-worker.md)). Сигналы, поставленные `scheduler`, пока
       воркер перезапускался, ждут в Redis и разбираются пустыми запусками. Новый воркер healthy
       сразу после старта (heartbeat при `WORKER_STARTUP`) и остаётся таким, пока запуски
       задачи проходят успешно. certbot при первом запуске кладёт self-signed
@@ -123,7 +123,7 @@ Postgres создаст рядом **пустой** кластер. Поэтом
    | `CORS_ORIGINS` | Variable | JSON-список источников, например `["https://app.example.com"]`; по умолчанию `[]` |
    | `DOMAIN` | Variable | публичное имя сервиса для сертификата Let's Encrypt, например `api.example.com` |
    | `CERTBOT_EMAIL` | Variable, необязательная | e-mail аккаунта Let's Encrypt (уведомления о проблемах с аккаунтом); без неё аккаунт регистрируется без почты |
-   | `LLM__API_KEY` | Variable, masked + protected, необязательная | ключ аккаунта LLM-прокси Spirit для сканирования вещей по фото ([ADR 0013](adr/0013-photo-scanning-with-llm.md)); без него сканирование отвечает 503 `item_recognition_disabled`, остальное работает |
+   | `LLM__API_KEY` | Variable, masked + protected, необязательная | ключ аккаунта LLM-прокси Spirit для сканирования вещей по фото ([ADR 0015](adr/0015-photo-scanning-with-llm.md)); без него сканирование отвечает 503 `item_recognition_disabled`, остальное работает |
    | `LLM__SCAN_MODEL` | Variable, необязательная | модель для сканирования в формате прокси `<provider>/<model>`; по умолчанию `openrouter/claude-haiku-5-5` |
 
    Значения без одинарных кавычек. Смена `POSTGRES_PASSWORD` не меняет пароль в уже созданной
@@ -135,7 +135,7 @@ Postgres создаст рядом **пустой** кластер. Поэтом
    Проверка после деплоя: `curl -I https://$DOMAIN/health/live`, а при проблемах —
    `docker compose logs certbot`. Том `letsencrypt` не удаляйте: повторный выпуск ограничен
    лимитами LE (5 одинаковых сертификатов в неделю).
-6. Web Push ([ADR 0011](adr/0011-notification-worker.md)): VM нужен исходящий HTTPS (`:443`)
+6. Web Push ([ADR 0012](adr/0012-notification-worker.md)): VM нужен исходящий HTTPS (`:443`)
    к push-сервисам браузеров (`fcm.googleapis.com`, `updates.push.services.mozilla.com`,
    `*.push.apple.com` и др.). Ключ VAPID создаётся сам при первом использовании в томе `vapid`
    (`/var/lib/app/vapid/private_key.pem`, общий для api и worker). **Том `vapid` не удаляйте**,

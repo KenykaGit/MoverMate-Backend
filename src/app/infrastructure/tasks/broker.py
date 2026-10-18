@@ -45,6 +45,6 @@ def create_redis_broker(url: str, *, queue_name: str) -> AsyncBroker:
 
     Messages are only wake-up calls: what to send lives in the notifications
     table. A lost or evicted message delays delivery until the next tick and
-    loses nothing (docs/adr/0011-notification-worker.md).
+    loses nothing (docs/adr/0012-notification-worker.md).
     """
     return TimeoutListQueueBroker(url, queue_name=queue_name)

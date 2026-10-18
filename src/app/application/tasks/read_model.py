@@ -1,6 +1,6 @@
 """The read side of tasks: what the plan screen shows.
 
-Like the inventory read model (ADR 0011), the port lives in the feature because it
+Like the inventory read model (ADR 0013), the port lives in the feature because it
 returns the feature's DTOs. Use cases check membership before asking it.
 """
 

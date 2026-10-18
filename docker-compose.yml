@@ -79,7 +79,7 @@ services:
         condition: service_healthy
 
   # Sends due notifications (Web Push) from the notifications table; no ports.
-  # Woken up through the Redis queue by `scheduler` (taskiq, ADR 0011).
+  # Woken up through the Redis queue by `scheduler` (taskiq, ADR 0012).
   worker:
     build:
       context: .

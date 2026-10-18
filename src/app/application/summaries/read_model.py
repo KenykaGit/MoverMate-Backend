@@ -2,7 +2,7 @@
 
 Lists of boxes and items are paginated, so a client cannot count them itself
 (frontend-backend-alignment.md, 2.4). Every method answers in one call: no N+1
-requests per room or box. Like the inventory read model (ADR 0011), the port lives
+requests per room or box. Like the inventory read model (ADR 0013), the port lives
 in the feature because it returns the feature's DTOs.
 """
 

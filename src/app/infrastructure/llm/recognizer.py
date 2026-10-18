@@ -1,5 +1,5 @@
 """Item recognition by a vision model behind an OpenAI-compatible Chat Completions API:
-the Spirit LLM proxy by default (docs/adr/0013-photo-scanning-with-llm.md).
+the Spirit LLM proxy by default (docs/adr/0015-photo-scanning-with-llm.md).
 
 The model is an auxiliary dependency: when it fails, only scanning answers 503, the
 failure is logged and counted, and /health/ready reports `degraded`.
