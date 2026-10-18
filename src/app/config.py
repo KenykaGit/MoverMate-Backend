@@ -160,10 +160,14 @@ class Settings(BaseSettings):
     @model_validator(mode="after")
     def _check_prod_secrets(self) -> Self:
         if self.env is Environment.PROD:
-            if self.seed_test_users and self.seed_test_password in {None, SecretStr(TEST_PASSWORD)}:
+            if self.seed_test_users and self.seed_test_password is None:
                 raise ValueError(
-                    "SEED_TEST_PASSWORD must be set to a private password in prod "
-                    "when SEED_TEST_USERS is on"
+                    "SEED_TEST_PASSWORD must be set in prod when SEED_TEST_USERS is on"
+                )
+            if self.seed_test_users and self.seed_test_password == SecretStr(TEST_PASSWORD):
+                raise ValueError(
+                    "SEED_TEST_PASSWORD is the public default of the seed catalog: "
+                    "choose a private one in prod"
                 )
             if self.auth.secret_key.get_secret_value() == DEV_SECRET_KEY:
                 raise ValueError("AUTH__SECRET_KEY must be set to a random value in prod")

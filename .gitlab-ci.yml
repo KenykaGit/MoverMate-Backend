@@ -176,7 +176,9 @@ deploy:
       : "${POSTGRES_USER:?set POSTGRES_USER}" "${POSTGRES_DB:?set POSTGRES_DB}"
       : "${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}" "${AUTH__SECRET_KEY:?set AUTH__SECRET_KEY}"
       : "${DOMAIN:?set DOMAIN}"
-      if [ "${SEED_TEST_USERS:-false}" = true ]; then : "${SEED_TEST_PASSWORD:?set SEED_TEST_PASSWORD}"; fi
+      case "$(printf '%s' "${SEED_TEST_USERS:-false}" | tr 'A-Z' 'a-z')" in
+        true|1|yes|y|on|t) : "${SEED_TEST_PASSWORD:?set SEED_TEST_PASSWORD}" ;;
+      esac
       printf "POSTGRES_USER='%s'\nPOSTGRES_PASSWORD='%s'\nPOSTGRES_DB='%s'\nAUTH__SECRET_KEY='%s'\nCORS_ORIGINS='%s'\nDOMAIN='%s'\nCERTBOT_EMAIL='%s'\nPUSH__VAPID_SUBJECT='%s'\nLLM__API_KEY='%s'\nLLM__SCAN_MODEL='%s'\nSAGE__API_KEY='%s'\nSAGE__GROUP='%s'\nSEED_TEST_USERS='%s'\nSEED_TEST_PASSWORD='%s'\n" \
         "$POSTGRES_USER" "$POSTGRES_PASSWORD" "$POSTGRES_DB" "$AUTH__SECRET_KEY" "${CORS_ORIGINS:-[]}" \
         "$DOMAIN" "${CERTBOT_EMAIL:-}" "${PUSH__VAPID_SUBJECT:-}" \

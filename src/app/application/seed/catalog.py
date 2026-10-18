@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from app.domain.inventory.value_objects import Priority
 from app.domain.tasks.value_objects import TaskPhase
 
-TEST_PASSWORD = "password"  # noqa: S105  # a public password of throwaway accounts
+TEST_PASSWORD = "Test-pass-123"  # noqa: S105  # a public password of throwaway accounts
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
