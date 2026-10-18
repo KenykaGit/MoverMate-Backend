@@ -10,6 +10,7 @@
 | логи api (stdout, JSON) | `docker compose logs api` | разбор конкретного запроса |
 | логи nginx (stdout, JSON) | `docker compose logs nginx` | что видел клиент, время апстрима |
 | логи certbot (прод) | `docker compose logs certbot` | выпуск и продление сертификата |
+| логи в Sage (прод) | [Sage](https://sage.spirit.t-education.com), группа `hack-led-12` | поиск по логам всех сервисов из браузера, алерты ([ADR 0017](adr/0017-logs-in-sage.md)) |
 | healthcheck и логи worker, логи scheduler | `docker compose ps worker scheduler`, `docker compose logs worker scheduler` | отправка уведомлений |
 
 ### `/health/ready`
@@ -155,6 +156,41 @@ LLM-прокси (`LLM__API_KEY`) хранится как `SecretStr`, а фот
   (`service_unavailable`).
 - `request_time` намного больше `upstream_response_time`: тормозит клиент или сеть, а не api.
 
+### Логи в Sage (прод)
+
+Сервис `vector` отправляет логи api, worker, scheduler, migrate, nginx, certbot и redis в Sage
+(Logs Collector, группа `hack-led-12`, [ADR 0017](adr/0017-logs-in-sage.md)). Приложение
+по-прежнему пишет только в stdout, поэтому `docker compose logs` на VM работает как раньше.
+Поля JSON-строк сохраняются как есть, Vector добавляет к ним:
+
+| Поле | Значение |
+|---|---|
+| `env` | `prod` |
+| `system` | сервис compose: `api`, `worker`, `scheduler`, `migrate`, `nginx`, `certbot`, `redis` |
+| `inst` | имя контейнера |
+| `@timestamp` | когда Docker получил строку (UTC) |
+| `level` | `INFO`, `WARN`, `ERROR`, `CRITICAL`…; у nginx — по `status`; нераспознанный уровень — в `level_raw` |
+| `message` | текст: `event` для structlog, строка целиком для не-JSON |
+| `version` | тег образа: git sha для приложения |
+| `stream` | `stdout` или `stderr` |
+
+Запросы MageQL на странице «Поиск»:
+
+```text
+group="hack-led-12" request_id="f111…"                        # запрос целиком: nginx и api
+group="hack-led-12" system="api" level="ERROR"                # 500 и необработанные ошибки
+group="hack-led-12" system="api" event="refresh_token_reused" # возможная кража сессии
+group="hack-led-12" system="worker" outcome="FAILED"          # уведомления, ушедшие в FAILED
+group="hack-led-12" system="nginx" status=502                 # api был недоступен
+group="hack-led-12" system="dead-letters"                     # логи, отклонённые Sage (поле error)
+```
+
+Если логов в Sage нет: `docker compose ps vector` и `docker compose logs vector` на VM.
+`401` — неверный `SAGE__API_KEY`; `404 group unavailable` — неверный `SAGE__GROUP`; `429` —
+исчерпана квота группы, Vector повторит отправку. Сервис не запускается, если
+`SAGE__API_KEY` не задан (deploy пишет об этом в лог job). Свои логи `vector` в Sage не
+отправляет.
+
 ### Сертификат (прод)
 
 Скрипты certbot и nginx пишут в stderr строки с префиксом, не JSON
@@ -173,7 +209,8 @@ LLM-прокси (`LLM__API_KEY`) хранится как `SecretStr`, а фот
 
 ## Как локализовать сбой
 
-1. **Клиент получил ошибку.** Возьмите `request_id` из тела ответа или заголовка и выполните
+1. **Клиент получил ошибку.** Возьмите `request_id` из тела ответа или заголовка и найдите его
+   в Sage (`group="hack-led-12" request_id="<id>"`) или на VM командой
    `docker compose logs api nginx | grep <request_id>`. Будет видна цепочка событий, а для 500
    и traceback.
 2. **Растут 5xx.** `http_requests_total{status=~"5.."}` по `route` покажет затронутый маршрут.

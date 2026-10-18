@@ -18,6 +18,9 @@ worker (taskiq worker) ◀───────────────┘
   │  без портов   ──▶ PostgreSQL   созревшие notifications, FOR UPDATE SKIP LOCKED
   └──HTTPS, исходящий (Web Push, VAPID)──▶ push-сервисы браузеров ──▶ service worker клиента
 api, worker ── общий том vapid: ключ VAPID (api отдаёт публичную часть, worker подписывает)
+
+stdout контейнеров с меткой sage.logs ──Docker API──▶ vector ──HTTPS, исходящий──▶ Sage
+  (api, worker, scheduler, migrate, nginx, certbot, redis)          Logs Collector (прод)
 ```
 
 - **nginx** — единственная публичная точка входа ([ADR 0006](adr/0006-nginx-edge-and-rate-limiting.md)).
@@ -48,6 +51,11 @@ api, worker ── общий том vapid: ключ VAPID (api отдаёт п�
   отказе только `scanItems` отвечает 503, `/health/ready` показывает `llm: degraded`. Без
   `LLM__API_KEY` сканирование выключено. Для этого маршрута nginx пропускает тело до 6 МБ
   и ждёт ответа до 45 с, для остальных — 1 МБ и 30 с.
+
+- **vector** (только прод) читает логи контейнеров через Docker API, добавляет поля, которые
+  требует Sage (`env`, `system`, `inst`, `@timestamp`, `level`), и отправляет их в Logs
+  Collector Sage ([ADR 0017](adr/0017-logs-in-sage.md)). Это вспомогательный сервис: от него
+  ничего не зависит, без `SAGE__API_KEY` он не запускается.
 
 ## Слои
 
@@ -133,7 +141,7 @@ api, worker ── общий том vapid: ключ VAPID (api отдаёт п�
   отвечает 404 того объекта, который он просил, а не 403. Порты проектов, уведомлений и
   журнала (`AbstractProjectRepository`, `AbstractNotificationRepository`, `AbstractAuditLog`)
   пока содержат только то, что нужно инвентарю.
-- **Сводки** ([ADR 0014](adr/0014-summaries-read-model.md)). Use cases `summaries`
+- **Сводки** ([ADR 0017](adr/0014-summaries-read-model.md)). Use cases `summaries`
   (`GetProjectSummary`, `GetLoadingChecklist`, `GetUnpackingProgress`, `GetBoxLabels`)
   проверяют участие через `project_of_member` и читают `AbstractSummaryReadModel`. Агрегаты
   считает SQL, по одному выражению на ответ, а правило «комната погружена» лежит в домене
@@ -356,6 +364,10 @@ import-linter выразить не может:
   отвечают 403); ротации ключа нет, кроме «новый ключ и повторная подписка клиентов».
 - У воркера нет `/metrics`: очередь видна по проверке `notifications` в `/health/ready`,
   healthcheck контейнера и логам.
+- `vector` монтирует сокет Docker, а это фактически root на хосте. При его перезапуске
+  (каждый деплой) строки за несколько секунд в Sage не попадают, а поле, сменившее тип в
+  пределах одного `system`, уводит событие в dead-letters ([ADR 0017](adr/0017-logs-in-sage.md)).
+  Логи Postgres в Sage не отправляются.
 - Эндпоинтов задач пока нет, хотя домен и таблицы для них готовы. Сводка
   (`summary`) уже считает задачи и отдаёт `next_task`, но на стенде задач нет, пока их не
   создаёт API.

@@ -17,7 +17,8 @@ commit ─▶ MR ─▶ check (параллельно) ─▶ build ─▶ merge
 4. **Deploy** (кнопка в пайплайне основной ветки; вход на сервер через Teleport; CI кладёт на VM
    docker-конфиг с IAM-токеном Spirit в `$DEPLOY_DIR/.docker`, `docker compose` читает его через
    `DOCKER_CONFIG`) копирует `docker-compose.prod.yml`, prod-конфиг nginx (`docker/nginx/`)
-   и скрипт certbot (`docker/certbot/`) в `$DEPLOY_DIR` и выполняет на сервере:
+   скрипт certbot (`docker/certbot/`) и конфиг Vector (`docker/vector/`) в `$DEPLOY_DIR` и
+   выполняет на сервере:
    1. `docker compose pull api` — тот же образ (и тег) используют `worker` и `scheduler`;
    2. `docker compose run --rm migrate` — `alembic upgrade head` тем же образом. Если миграция
       упала, job красный, а старый api продолжает обслуживать трафик;
@@ -32,7 +33,11 @@ commit ─▶ MR ─▶ check (параллельно) ─▶ build ─▶ merge
       заглушку, выпускает сертификат Let's Encrypt для `DOMAIN` и затем сам продлевает его
       ([ADR 0009](adr/0009-tls-letsencrypt-certbot.md));
    4. `nginx -t && nginx -s reload` — конфиг nginx едет вместе с коммитом;
-   5. smoke-тест: `https://127.0.0.1/health/ready` должен вернуть `version` нового коммита
+   5. `docker compose up -d --force-recreate vector`, если задан `SAGE__API_KEY` (иначе
+      `vector` удаляется) — отправка логов в Sage с новым конфигом
+      ([ADR 0017](adr/0017-logs-in-sage.md)). Без `--wait`: сбой `vector` выводит
+      предупреждение, но не валит деплой;
+   6. smoke-тест: `https://127.0.0.1/health/ready` должен вернуть `version` нового коммита
       (`curl -k`: сразу после первого деплоя ещё может отдаваться заглушка). Если доверенного
       сертификата для `DOMAIN` пока нет, job печатает предупреждение, но не падает.
 
@@ -77,7 +82,8 @@ commit ─▶ MR ─▶ check (параллельно) ─▶ build ─▶ merge
 
 Все версии закреплены точно: Python-зависимости `==` в `pyproject.toml` плюс `uv.lock`,
 Python в `.python-version`, uv в `[tool.uv] required-version`, Docker-образы — полным тегом
-(`postgres:18.6-alpine3.24`, `valkey/valkey:9.1.2-alpine3.24`, `nginx:1.30.5-alpine3.24`…)
+(`postgres:18.6-alpine3.24`, `valkey/valkey:9.1.2-alpine3.24`, `nginx:1.30.5-alpine3.24`,
+`timberio/vector:0.58.0-alpine`…)
 в `docker-compose*.yml`, `.gitlab-ci.yml` и `tests/integration/conftest.py`. Транзитивные
 зависимости pywebpush (`aiohttp`, `multidict`) закреплены через
 `[tool.uv] constraint-dependencies` на релизах не моложе двух недель. Обновление — обычный
@@ -125,6 +131,8 @@ Postgres создаст рядом **пустой** кластер. Поэтом
    | `CERTBOT_EMAIL` | Variable, необязательная | e-mail аккаунта Let's Encrypt (уведомления о проблемах с аккаунтом); без неё аккаунт регистрируется без почты |
    | `LLM__API_KEY` | Variable, masked + protected, необязательная | ключ аккаунта LLM-прокси Spirit для сканирования вещей по фото ([ADR 0015](adr/0015-photo-scanning-with-llm.md)); без него сканирование отвечает 503 `item_recognition_disabled`, остальное работает |
    | `LLM__SCAN_MODEL` | Variable, необязательная | модель для сканирования в формате прокси `<provider>/<model>`; по умолчанию `openrouter/claude-haiku-5-5` |
+   | `SAGE__API_KEY` | Variable, masked + protected, необязательная | Spirit API ключ для отправки логов в Sage сервисом `vector` ([ADR 0017](adr/0017-logs-in-sage.md)); без него логи остаются только на VM |
+   | `SAGE__GROUP` | Variable, необязательная | группа Sage для логов; по умолчанию `hack-led-12` |
 
    Значения без одинарных кавычек. Смена `POSTGRES_PASSWORD` не меняет пароль в уже созданной
    БД (Postgres читает его только при инициализации тома): нужен ещё `ALTER USER`. Смена
@@ -142,7 +150,11 @@ Postgres создаст рядом **пустой** кластер. Поэтом
    как и `pg-data`: с новым ключом все подписки браузеров перестают работать (push-сервисы
    отвечают 403), и клиентам нужно подписаться заново. Контакт VAPID (`sub`) — CI-переменная
    `PUSH__VAPID_SUBJECT` (`mailto:` или `https://`); без неё — `https://$DOMAIN`.
-7. Если перед nginx появится балансировщик, который сам завершает TLS, верните прод на
+7. Логи в Sage ([ADR 0017](adr/0017-logs-in-sage.md)): VM нужен исходящий HTTPS к
+   `sage.spirit.t-education.com`. Проверка после деплоя: `docker compose ps vector` (healthy),
+   затем в Sage запрос `group="hack-led-12" system="api"`. Ошибки отправки — в
+   `docker compose logs vector`.
+8. Если перед nginx появится балансировщик, который сам завершает TLS, верните прод на
    HTTP-конфиг [nginx.conf](../docker/nginx/nginx.conf) и раскомментируйте `set_real_ip_from` в
    [http.conf](../docker/nginx/http.conf), иначе rate limit будет считать все запросы с IP
    балансировщика.

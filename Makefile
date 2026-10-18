@@ -94,9 +94,16 @@ migrations-check: infra ## As in CI: single head, upgrade, drift check, downgrad
 	DATABASE__URL=$(LOCAL_TEST_DB) uv run alembic downgrade base
 	DATABASE__URL=$(LOCAL_TEST_DB) uv run alembic upgrade head
 
+.PHONY: vector-check
+vector-check: ## As in CI: validate the Sage log shipping config and run its transform tests
+	docker run --rm -v "$(CURDIR)/docker/vector:/etc/vector:ro" -e SAGE__API_KEY=ci-placeholder \
+		--entrypoint sh timberio/vector:0.58.0-alpine -c \
+		'vector validate --no-environment --dangerously-allow-env-var-interpolation /etc/vector/vector.toml && vector test --dangerously-allow-env-var-interpolation /etc/vector/vector.toml /etc/vector/tests.toml'
+
 .PHONY: check
 check: ## Everything CI runs before the build (sequential even under make -j)
 	@# Not prerequisites: under -j they would run in parallel.
 	$(MAKE) lint
 	$(MAKE) test
 	$(MAKE) migrations-check
+	$(MAKE) vector-check

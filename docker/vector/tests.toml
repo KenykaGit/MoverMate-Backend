@@ -1,0 +1,146 @@
+# Unit tests of the Sage event transform: `vector test vector.toml tests.toml`
+# (the `vector` job in CI). Inputs mimic events of the docker_logs source.
+
+[[tests]]
+name = "api JSON line becomes fields with Sage metadata"
+
+[[tests.inputs]]
+insert_at = "sage_event"
+type = "log"
+[tests.inputs.log_fields]
+message = '{"event": "http_request", "status": 409, "level": "warning", "request_id": "f111", "timestamp": "2026-10-18T10:00:00Z"}'
+container_name = "/backend-api-1"
+image = "registry.example.com/team/backend:b83ead4"
+stream = "stdout"
+"label.\"com.docker.compose.service\"" = "api"
+
+[[tests.outputs]]
+extract_from = "sage_event"
+[[tests.outputs.conditions]]
+type = "vrl"
+source = '''
+assert_eq!(.event, "http_request")
+assert_eq!(.message, "http_request")
+assert_eq!(.status, 409)
+assert_eq!(.request_id, "f111")
+assert_eq!(.level, "WARN")
+assert_eq!(.env, "prod")
+assert_eq!(.system, "api")
+assert_eq!(.inst, "backend-api-1")
+assert_eq!(.version, "b83ead4")
+assert_eq!(.stream, "stdout")
+assert!(match(string!(."@timestamp"), r'^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{6}\+00:00$'))
+assert!(!exists(.label))
+assert!(!exists(.container_name))
+assert!(!exists(.image))
+'''
+
+[[tests]]
+name = "nginx access log gets a level from the status code"
+
+[[tests.inputs]]
+insert_at = "sage_event"
+type = "log"
+[tests.inputs.log_fields]
+message = '{"time": "2026-10-18T10:00:00+00:00", "request_id": "f111", "status": 502, "uri": "/api/v1/projects"}'
+container_name = "/backend-nginx-1"
+image = "nginx:1.30.5-alpine3.24"
+stream = "stdout"
+"label.\"com.docker.compose.service\"" = "nginx"
+
+[[tests.outputs]]
+extract_from = "sage_event"
+[[tests.outputs.conditions]]
+type = "vrl"
+source = '''
+assert_eq!(.level, "ERROR")
+assert_eq!(.system, "nginx")
+assert_eq!(.request_id, "f111")
+assert_eq!(.version, "1.30.5-alpine3.24")
+assert!(!exists(.message))
+'''
+
+[[tests]]
+name = "text lines stay in message and get a level when it is recognisable"
+
+[[tests.inputs]]
+insert_at = "sage_event"
+type = "log"
+[tests.inputs.log_fields]
+message = '2026/10/18 10:00:00 [crit] 29#29: *1 connect() failed (111: Connection refused)'
+container_name = "/backend-nginx-1"
+image = "nginx:1.30.5-alpine3.24"
+stream = "stderr"
+"label.\"com.docker.compose.service\"" = "nginx"
+
+[[tests.outputs]]
+extract_from = "sage_event"
+[[tests.outputs.conditions]]
+type = "vrl"
+source = '''
+assert_eq!(.message, "2026/10/18 10:00:00 [crit] 29#29: *1 connect() failed (111: Connection refused)")
+assert_eq!(.level, "CRITICAL")
+assert_eq!(.stream, "stderr")
+'''
+
+[[tests]]
+name = "Postgres log levels are mapped to Sage levels"
+
+[[tests.inputs]]
+insert_at = "sage_event"
+type = "log"
+[tests.inputs.log_fields]
+message = '2026-10-18 10:00:00.000 UTC [42] LOG:  checkpoint starting: time'
+container_name = "/backend-db-1"
+image = "postgres:18.6-alpine3.24"
+stream = "stderr"
+"label.\"com.docker.compose.service\"" = "db"
+
+[[tests.outputs]]
+extract_from = "sage_event"
+[[tests.outputs.conditions]]
+type = "vrl"
+source = '''
+assert_eq!(.level, "INFO")
+assert_eq!(.system, "db")
+'''
+
+[[tests]]
+name = "unknown text gets no level and app fields cannot override Sage metadata"
+
+[[tests.inputs]]
+insert_at = "sage_event"
+type = "log"
+[tests.inputs.log_fields]
+message = '{"event": "x", "env": "dev", "system": "spoofed", "level": "exception"}'
+container_name = "/backend-worker-1"
+image = "registry.example.com/team/backend:b83ead4"
+stream = "stdout"
+"label.\"com.docker.compose.service\"" = "worker"
+
+[[tests.inputs]]
+insert_at = "sage_event"
+type = "log"
+[tests.inputs.log_fields]
+message = 'Saving debug log to /var/log/letsencrypt/letsencrypt.log'
+container_name = "/backend-certbot-1"
+image = "certbot/certbot:v5.8.0"
+stream = "stdout"
+"label.\"com.docker.compose.service\"" = "certbot"
+
+[[tests.outputs]]
+extract_from = "sage_event"
+[[tests.outputs.conditions]]
+type = "vrl"
+source = '''
+if .system == "worker" {
+  assert_eq!(.env, "prod")
+  assert!(!exists(.level))
+  assert_eq!(.level_raw, "EXCEPTION")
+  assert_eq!(.system, "worker")
+} else {
+  assert_eq!(.system, "certbot")
+  assert!(!exists(.level))
+  assert_eq!(.version, "v5.8.0")
+}
+'''

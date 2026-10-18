@@ -1,0 +1,112 @@
+# Ships container logs to Sage Logs Collector (docs/adr/0017-logs-in-sage.md).
+# Reads stdout/stderr of containers labelled `sage.logs=true` through the Docker API,
+# adds the fields Sage requires (env, system, inst, @timestamp) and posts them in
+# gzip-compressed batches of newline-delimited JSON. The services themselves keep writing
+# to stdout only: when Sage or this container is down, nothing else is affected.
+#
+# Environment: SAGE__API_KEY (Spirit API key, required), SAGE__GROUP (Sage group),
+# SAGE__ENV (value of `env`), SAGE__URL (collector base URL). Env references below need
+# `--dangerously-allow-env-var-interpolation` (off by default since Vector 0.5x); only the
+# compose file controls this container's environment (interpolation also runs in comments).
+
+data_dir = "/var/lib/vector"
+
+# Liveness for the compose healthcheck; bound to loopback, not published.
+[api]
+enabled = true
+address = "127.0.0.1:8686"
+
+[sources.containers]
+type = "docker_logs"
+include_labels = ["sage.logs=true"]
+
+[transforms.sage_event]
+type = "remap"
+inputs = ["containers"]
+source = '''
+service = string(.label."com.docker.compose.service") ?? "unknown"
+container = replace(string(.container_name) ?? "unknown", r'^/', "")
+image = string(.image) ?? ""
+stream = string(.stream) ?? ""
+received = .timestamp
+raw = string(.message) ?? ""
+
+# JSON lines (api, worker, scheduler, migrate, nginx access log) become fields of the
+# event; anything else (nginx error log, Postgres, Valkey, certbot, tracebacks) stays a
+# single `message` string.
+parsed, err = parse_json(raw)
+if err == null && is_object(parsed) {
+  . = object!(parsed)
+} else {
+  . = {"message": raw}
+}
+
+# structlog puts the text into `event`; Sage shows `message` in the result list.
+if !exists(.message) && is_string(.event) {
+  .message = .event
+}
+
+# Sage accepts ERROR, DEBUG, CRITICAL, FATAL, EMERGENCY, INFO, IMPORTANT, WARN, TRACE;
+# anything else ends up as UNDEFINED.
+level = upcase(string(.level) ?? "")
+if level == "" && is_string(.message) {
+  # nginx error log: "... [warn] 1#1: ...", Postgres: "... ERROR:  ..."
+  m, merr = parse_regex(.message, r'\[(?P<l>debug|info|notice|warn|error|crit|alert|emerg)\]|\b(?P<p>DEBUG\d?|LOG|INFO|NOTICE|WARNING|ERROR|FATAL|PANIC):')
+  if merr == null {
+    level = upcase(string(m.l) ?? string(m.p) ?? "")
+  }
+}
+if level == "" && is_integer(.status) {
+  # nginx access log has no level: derive it from the status code.
+  status = int!(.status)
+  level = if status >= 500 { "ERROR" } else if status >= 400 { "WARN" } else { "INFO" }
+}
+level = if level == "WARNING" {
+  "WARN"
+} else if level == "LOG" || level == "NOTICE" || starts_with(level, "DEBUG") {
+  if level == "LOG" || level == "NOTICE" { "INFO" } else { "DEBUG" }
+} else if level == "CRIT" || level == "ALERT" || level == "PANIC" {
+  "CRITICAL"
+} else if level == "EMERG" {
+  "EMERGENCY"
+} else {
+  level
+}
+del(.level)
+if includes(["ERROR", "DEBUG", "CRITICAL", "FATAL", "EMERGENCY", "INFO", "IMPORTANT", "WARN", "TRACE"], level) {
+  .level = level
+} else if level != "" {
+  .level_raw = level
+}
+
+# Required by Sage: env, system, inst, @timestamp (within a minute of ingestion; the
+# Docker receive time, not the app's own `timestamp`, so a skewed clock cannot push
+# events into dead-letters). Configured values win over same-named app fields.
+.env = "${SAGE__ENV:-prod}"
+.system = service
+.inst = container
+."@timestamp" = format_timestamp!(received, format: "%Y-%m-%dT%H:%M:%S%.6f+00:00", timezone: "UTC")
+.stream = stream
+# Image tag: the git short sha for app services, the version for nginx and others.
+tag, terr = parse_regex(image, r':(?P<t>[^:/]+)$')
+if terr == null {
+  .version = tag.t
+}
+'''
+
+[sinks.sage]
+type = "http"
+inputs = ["sage_event"]
+uri = "${SAGE__URL:-https://sage.spirit.t-education.com}/api/${SAGE__GROUP:-hack-led-12}/multiline/"
+method = "post"
+compression = "gzip"
+# The collector has no health endpoint; delivery errors show up in this container's log.
+healthcheck.enabled = false
+framing.method = "newline_delimited"
+encoding.codec = "json"
+batch.max_events = 500
+batch.timeout_secs = 2
+request.headers.Authorization = "JWT ${SAGE__API_KEY}"
+# 429 (group quota) and 5xx are retried with backoff; while Sage is down, events wait in
+# the buffer and then back-pressure the Docker log reader (containers are not affected).
+buffer.max_events = 10000

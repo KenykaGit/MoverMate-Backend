@@ -15,6 +15,7 @@ variables:
   POSTGRES_IMAGE: postgres:18.6-alpine3.24
   VALKEY_IMAGE: valkey/valkey:9.1.2-alpine3.24
   NGINX_IMAGE: nginx:1.30.5-alpine3.24
+  VECTOR_IMAGE: timberio/vector:0.58.0-alpine
 
 .check:
   stage: check
@@ -112,6 +113,21 @@ nginx:
         -keyout /etc/nginx/tls/privkey.pem -out /etc/nginx/tls/fullchain.pem
     - nginx -t -c "$CI_PROJECT_DIR/docker/nginx/nginx.prod.conf"
 
+# Log shipping to Sage (docs/adr/0017-logs-in-sage.md): config loads and the transform
+# produces the fields Sage requires. A placeholder key: the real one is needed only on the VM.
+vector:
+  extends: .check
+  image:
+    name: $VECTOR_IMAGE
+    entrypoint: [""]
+  cache: []
+  before_script: []
+  variables:
+    SAGE__API_KEY: ci-placeholder
+  script:
+    - vector validate --no-environment --dangerously-allow-env-var-interpolation docker/vector/vector.toml
+    - vector test --dangerously-allow-env-var-interpolation docker/vector/vector.toml docker/vector/tests.toml
+
 .build:image:
   extends: .dp_build
   variables:
@@ -148,21 +164,23 @@ deploy:
   script:
     - !reference [.configure_docker, script]
     - |
-      tsh ssh "${DEPLOY_SSH_USER}@${DEPLOY_VM}" "sudo install -d -o '${DEPLOY_SSH_USER}' '${DEPLOY_DIR}' '${DEPLOY_DIR}/nginx' '${DEPLOY_DIR}/certbot'"
+      tsh ssh "${DEPLOY_SSH_USER}@${DEPLOY_VM}" "sudo install -d -o '${DEPLOY_SSH_USER}' '${DEPLOY_DIR}' '${DEPLOY_DIR}/nginx' '${DEPLOY_DIR}/certbot' '${DEPLOY_DIR}/vector'"
       tsh scp docker-compose.prod.yml "${DEPLOY_SSH_USER}@${DEPLOY_VM}:${DEPLOY_DIR}/docker-compose.yml"
       tsh scp docker/nginx/nginx.prod.conf docker/nginx/http.conf docker/nginx/routes.conf docker/nginx/tls-entrypoint.sh \
         "${DEPLOY_SSH_USER}@${DEPLOY_VM}:${DEPLOY_DIR}/nginx/"
       tsh scp docker/certbot/certbot.sh "${DEPLOY_SSH_USER}@${DEPLOY_VM}:${DEPLOY_DIR}/certbot/certbot.sh"
+      tsh scp docker/vector/vector.toml "${DEPLOY_SSH_USER}@${DEPLOY_VM}:${DEPLOY_DIR}/vector/vector.toml"
     # App secrets live in CI variables; the VM gets a 600 .env (rewritten on every deploy) so
     # that manual `docker compose` calls on the server work. Values travel over stdin only.
     - |
       : "${POSTGRES_USER:?set POSTGRES_USER}" "${POSTGRES_DB:?set POSTGRES_DB}"
       : "${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}" "${AUTH__SECRET_KEY:?set AUTH__SECRET_KEY}"
       : "${DOMAIN:?set DOMAIN}"
-      printf "POSTGRES_USER='%s'\nPOSTGRES_PASSWORD='%s'\nPOSTGRES_DB='%s'\nAUTH__SECRET_KEY='%s'\nCORS_ORIGINS='%s'\nDOMAIN='%s'\nCERTBOT_EMAIL='%s'\nPUSH__VAPID_SUBJECT='%s'\nLLM__API_KEY='%s'\nLLM__SCAN_MODEL='%s'\n" \
+      printf "POSTGRES_USER='%s'\nPOSTGRES_PASSWORD='%s'\nPOSTGRES_DB='%s'\nAUTH__SECRET_KEY='%s'\nCORS_ORIGINS='%s'\nDOMAIN='%s'\nCERTBOT_EMAIL='%s'\nPUSH__VAPID_SUBJECT='%s'\nLLM__API_KEY='%s'\nLLM__SCAN_MODEL='%s'\nSAGE__API_KEY='%s'\nSAGE__GROUP='%s'\n" \
         "$POSTGRES_USER" "$POSTGRES_PASSWORD" "$POSTGRES_DB" "$AUTH__SECRET_KEY" "${CORS_ORIGINS:-[]}" \
         "$DOMAIN" "${CERTBOT_EMAIL:-}" "${PUSH__VAPID_SUBJECT:-}" \
-        "${LLM__API_KEY:-}" "${LLM__SCAN_MODEL:-openrouter/claude-haiku-5-5}" |
+        "${LLM__API_KEY:-}" "${LLM__SCAN_MODEL:-openrouter/claude-haiku-5-5}" \
+        "${SAGE__API_KEY:-}" "${SAGE__GROUP:-hack-led-12}" |
         tsh ssh "${DEPLOY_SSH_USER}@${DEPLOY_VM}" "umask 077 && cat > '${DEPLOY_DIR}/.env.new' && mv '${DEPLOY_DIR}/.env.new' '${DEPLOY_DIR}/.env'"
     - |
       tsh ssh "${DEPLOY_SSH_USER}@${DEPLOY_VM}" "sudo bash -s" <<EOF
@@ -175,6 +193,15 @@ deploy:
       docker compose run --rm -T migrate </dev/null
       docker compose up -d --wait api worker scheduler certbot nginx
       docker compose exec -T nginx sh -c 'nginx -t && nginx -s reload' </dev/null
+      # Log shipping to Sage is auxiliary: no --wait, and its failure does not fail the deploy.
+      # Recreated every time: compose does not notice changes inside the bind-mounted config.
+      if [ -n '${SAGE__API_KEY:+set}' ]; then
+        docker compose up -d --force-recreate vector </dev/null ||
+          echo "warning: vector did not start, logs are not shipped to Sage: docker compose logs vector"
+      else
+        echo "SAGE__API_KEY is not set: logs are not shipped to Sage"
+        docker compose rm -sf vector </dev/null
+      fi
       for i in 1 2 3 4 5 6 7 8 9 10; do
         # -k: right after the first deploy nginx may still serve the self-signed placeholder.
         if curl -fsSk https://127.0.0.1/health/ready | grep -q '"version":"${IMAGE_TAG}"'; then
