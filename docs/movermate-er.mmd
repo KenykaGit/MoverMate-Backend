@@ -1,0 +1,172 @@
+erDiagram
+    users {
+        uuid id PK
+        varchar username "unique among active users"
+        text password_hash
+        bool is_active
+        timestamptz created_at
+        timestamptz updated_at
+    }
+
+    refresh_tokens {
+        uuid id PK
+        uuid user_id FK
+        uuid family_id "one login session and its rotations"
+        varchar token_hash UK "sha256 hex, never the token"
+        timestamptz expires_at
+        timestamptz revoked_at "nullable"
+        timestamptz created_at
+    }
+
+    push_subscriptions {
+        uuid id PK
+        uuid user_id FK
+        varchar endpoint UK
+        varchar p256dh
+        varchar auth
+        bool is_active
+        timestamptz created_at
+    }
+
+    projects {
+        uuid id PK
+        uuid owner_id FK
+        varchar name
+        date moving_date
+        varchar origin_address "nullable"
+        varchar destination_address "nullable"
+        varchar qr_code_strategy "PROTECTED | OPEN"
+        varchar time_zone
+        bool is_active
+        timestamptz created_at
+        timestamptz updated_at
+    }
+
+    project_collaborators {
+        uuid project_id PK, FK
+        uuid user_id PK, FK
+        timestamptz created_at
+    }
+
+    project_reminders {
+        uuid project_id PK, FK "cascade"
+        int offset_days PK "0..365 days before the move"
+    }
+
+    rooms {
+        uuid id PK
+        uuid project_id FK
+        varchar kind "SOURCE | DESTINATION"
+        varchar name
+        bool is_active
+    }
+
+    boxes {
+        uuid id PK
+        uuid project_id FK
+        int number
+        varchar qr_token UK
+        uuid destination_room_id FK
+        uuid created_by_id FK
+        varchar title "nullable"
+        bool is_fragile
+        varchar status "PACKING | PACKED | LOADED | DELIVERED | UNPACKED"
+        timestamptz status_changed_at
+        bool is_active
+        timestamptz created_at
+        timestamptz updated_at
+    }
+
+    items {
+        uuid id PK
+        uuid project_id FK
+        uuid box_id FK "nullable, set iff state = IN_BOX"
+        uuid source_room_id FK
+        varchar name
+        int quantity "1..QUANTITY_MAX"
+        smallint priority "0..3: FIRST_NECESSITY | HIGH | MEDIUM | LOW"
+        varchar state "TO_PACK | IN_BOX | TAKEN_OUT | LOST"
+        bool is_active
+        timestamptz created_at
+        timestamptz updated_at
+    }
+
+    audit_logs {
+        uuid id PK
+        uuid project_id FK
+        uuid actor_id "nullable, no FK on purpose"
+        varchar entity_type "PROJECT | BOX | TASK | ITEM"
+        uuid entity_id "no FK on purpose"
+        varchar action "e.g. BOX_STATUS_CHANGED"
+        jsonb details
+        timestamptz created_at
+    }
+
+    tasks {
+        uuid id PK
+        uuid project_id FK
+        varchar title
+        varchar description "nullable"
+        varchar phase "BEFORE | DURING | AFTER"
+        timestamptz due_at "nullable"
+        bool is_done
+        timestamptz done_at "nullable, set iff is_done"
+        bool is_active
+        timestamptz created_at
+        timestamptz updated_at
+    }
+
+    task_collaborators {
+        uuid task_id PK, FK
+        uuid user_id PK
+        uuid project_id "same project as the task and the member"
+        timestamptz created_at
+    }
+
+    task_reminders {
+        uuid task_id PK, FK "cascade"
+        int offset_hours PK "1..8760 hours before due_at"
+    }
+
+    notifications {
+        uuid id PK
+        uuid project_id FK
+        uuid user_id FK
+        varchar type "TASK_ASSIGNED | TASK_REMINDER | BOX_CONTENTS_REMINDER | MOVING_DATE_REMINDER"
+        uuid task_id FK "nullable"
+        uuid box_id FK "nullable"
+        int reminder_offset_hours "nullable, TASK_REMINDER only"
+        int reminder_offset_days "nullable, MOVING_DATE_REMINDER only"
+        timestamptz scheduled_at
+        varchar status "PENDING | SENT | FAILED | CANCELLED | SKIPPED"
+        int attempts
+        text last_error "nullable"
+        timestamptz sent_at "nullable"
+        timestamptz created_at
+    }
+
+    users ||--o{ projects : "owner"
+    users ||--o{ project_collaborators : "member"
+    users ||--o{ refresh_tokens : "sessions"
+    users ||--o{ push_subscriptions : "browsers"
+    users ||--o{ boxes : "created_by"
+    users ||--o{ notifications : "recipient"
+
+    projects ||--o{ project_collaborators : "members"
+    projects ||--o{ project_reminders : "moving date reminders"
+    projects ||--o{ rooms : "rooms"
+    projects ||--o{ boxes : "boxes"
+    projects ||--o{ items : "items"
+    projects ||--o{ tasks : "tasks"
+    projects ||--o{ audit_logs : "journal"
+    projects ||--o{ notifications : "notifications"
+
+    rooms ||--o{ boxes : "destination"
+    rooms ||--o{ items : "source"
+    boxes |o--o{ items : "IN_BOX"
+    boxes |o--o{ notifications : "BOX_CONTENTS_REMINDER"
+
+    tasks ||--o{ task_collaborators : "assignees"
+    tasks ||--o{ task_reminders : "reminders"
+    tasks |o--o{ notifications : "TASK_*"
+    project_collaborators ||--o{ task_collaborators : "assignee"
