@@ -53,7 +53,7 @@ unit-тестами.
 | `http_request_duration_seconds` | `method`, `route` | p95/p99 латентности |
 | `redis_errors_total` | `op` (`rate_limit`, `idempotency_begin`…) | любой рост означает работу в деградированном режиме. `op="task_queue_pop"` считается в процессе воркера, у которого нет `/metrics`: там смотрите логи |
 | `rate_limited_total` | `scope=api\|auth\|scan` | клиенты упираются в лимит; рост `auth` — признак перебора паролей |
-| `llm_requests_total` | `operation=scan_items`, `outcome` | вызовы модели: `ok`; `timeout` (дольше `LLM__TIMEOUT_SECONDS`), `unreachable` (прокси недоступен), `rate_limited` (429: квота аккаунта прокси), `rejected` (прочие 4xx: ключ, заблокированная модель — чините настройки), `error` (5xx), `bad_answer` (модель ответила не JSON) |
+| `llm_requests_total` | `operation=scan_items`, `outcome` | вызовы модели: `ok`; `timeout` (дольше `LLM__TIMEOUT_SECONDS`), `unreachable` (прокси недоступен), `rate_limited` (429: квота аккаунта прокси), `rejected` (прочие 4xx: ключ, заблокированная модель — чините настройки), `error` (5xx), `bad_answer` (модель ответила не JSON), `truncated` (ответ оборвался на лимите токенов провайдера: сами мы `max_tokens` не передаём) |
 | `llm_request_duration_seconds` | `operation` | латентность модели, включая неудачные вызовы; таймаут nginx для сканирования — 45 с |
 
 `route` — шаблон пути (`/api/v1/projects/{project_id}`, а не сам id), поэтому кардинальность ограничена.

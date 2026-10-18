@@ -105,7 +105,6 @@ class LlmItemRecognizer(AbstractItemRecognizer):
         api_key: str,
         model: str,
         timeout_seconds: float,
-        max_output_tokens: int,
         status: LlmCallStatus,
         session: aiohttp.ClientSession | None = None,
     ) -> None:
@@ -113,7 +112,6 @@ class LlmItemRecognizer(AbstractItemRecognizer):
         self._headers = {"Authorization": f"Bearer {api_key}"}
         self._model = model
         self._timeout = aiohttp.ClientTimeout(total=timeout_seconds)
-        self._max_output_tokens = max_output_tokens
         self._status = status
         self._session = session
         self._owns_session = session is None
@@ -162,10 +160,11 @@ class LlmItemRecognizer(AbstractItemRecognizer):
         return self._session
 
     def _request_body(self, photo: Photo) -> dict[str, Any]:
+        # No max_tokens: the model thinks by default and thinking counts against the
+        # cap, so a cap cut answers off mid-JSON. The prompt keeps the answer short.
         image = base64.b64encode(photo.content).decode("ascii")
         return {
             "model": self._model,
-            "max_tokens": self._max_output_tokens,
             "temperature": 0,
             "messages": [
                 {"role": "system", "content": SYSTEM_PROMPT},
@@ -217,18 +216,28 @@ def _outcome_of(status: int) -> str:
 def _completion_of(text: str) -> _Answer:
     try:
         payload = json.loads(text)
-        message = payload["choices"][0]["message"]
-        content = message["content"]
+        choice = payload["choices"][0]
+        content = choice["message"]["content"]
+        finish_reason = choice.get("finish_reason")
         usage = payload.get("usage") or {}
-    except (ValueError, KeyError, IndexError, TypeError) as error:
+    except (ValueError, KeyError, IndexError, TypeError, AttributeError) as error:
         raise _CallFailedError(
             "bad_answer", f"not a chat completion: {error!r}", http_status=_OK
         ) from error
+    if not isinstance(usage, dict):
+        usage = {}
+    if finish_reason == "length":
+        # The provider's own default cap (we send none) cut the answer off.
+        raise _CallFailedError(
+            "truncated",
+            f"the answer hit max_tokens (completion_tokens={usage.get('completion_tokens')})",
+            http_status=_OK,
+        )
     if isinstance(content, list):  # some providers answer with content parts
         content = "".join(part.get("text", "") for part in content if isinstance(part, dict))
     if not isinstance(content, str):
         raise _CallFailedError("bad_answer", "the completion has no text", http_status=_OK)
-    return _Answer(content=content, usage=usage if isinstance(usage, dict) else {})
+    return _Answer(content=content, usage=usage)
 
 
 def _parse_answer(content: str) -> list[RecognizedItem]:

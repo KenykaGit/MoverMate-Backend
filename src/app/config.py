@@ -114,7 +114,6 @@ class LlmSettings(BaseModel):
     scan_model: str = Field(default="openrouter/claude-haiku-5-5", min_length=1)
     """`<provider>/<model>` as the proxy names it."""
     timeout_seconds: float = Field(default=30.0, gt=0)
-    max_output_tokens: int = Field(default=1024, ge=1)
 
     @field_validator("api_key", mode="before")
     @classmethod

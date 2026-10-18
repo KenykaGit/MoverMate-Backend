@@ -31,7 +31,6 @@ def make_recognizer(
         api_key=API_KEY,
         model=MODEL,
         timeout_seconds=timeout_seconds,
-        max_output_tokens=512,
         status=status,
     )
 
@@ -66,7 +65,7 @@ async def test_the_photo_goes_to_the_model_as_an_openai_compatible_request(
     assert request.path == "/v1/chat/completions"
     assert request.authorization == f"Bearer {API_KEY}"
     assert request.body["model"] == MODEL
-    assert request.body["max_tokens"] == 512
+    assert "max_tokens" not in request.body
     assert request.body["temperature"] == 0
     assert request.body["messages"][0] == {"role": "system", "content": SYSTEM_PROMPT}
     assert request.image == ("image/png", PHOTO.content)
@@ -115,6 +114,8 @@ async def test_content_parts_are_joined(
         (200, "<html>not json</html>", "bad_answer"),
         (200, {"choices": []}, "bad_answer"),
         (200, completion("Sorry, I can't help with that."), "bad_answer"),
+        # The provider's default cap cut the JSON off mid-answer.
+        (200, completion('{"items', finish_reason="length"), "truncated"),
     ],
 )
 async def test_failures_are_unavailable_counted_logged_and_degrade_readiness(

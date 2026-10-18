@@ -19,7 +19,13 @@ MODEL = "openrouter/claude-haiku-5-5"
 _LOOPBACK = "127.0.0.1"
 
 
-def completion(content: str, *, prompt_tokens: int = 1200, completion_tokens: int = 40) -> Any:
+def completion(
+    content: str,
+    *,
+    prompt_tokens: int = 1200,
+    completion_tokens: int = 40,
+    finish_reason: str = "stop",
+) -> Any:
     """A Chat Completions response with one message."""
     return {
         "id": "chatcmpl-test",
@@ -29,7 +35,7 @@ def completion(content: str, *, prompt_tokens: int = 1200, completion_tokens: in
             {
                 "index": 0,
                 "message": {"role": "assistant", "content": content},
-                "finish_reason": "stop",
+                "finish_reason": finish_reason,
             }
         ],
         "usage": {"prompt_tokens": prompt_tokens, "completion_tokens": completion_tokens},

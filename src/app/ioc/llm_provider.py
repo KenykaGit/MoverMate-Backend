@@ -30,7 +30,6 @@ class LlmProvider(Provider):
             api_key=config.api_key.get_secret_value(),
             model=config.scan_model,
             timeout_seconds=config.timeout_seconds,
-            max_output_tokens=config.max_output_tokens,
             status=status,
         )
         yield recognizer
