@@ -83,6 +83,9 @@ def settings() -> Settings:
         push=PushSettings(vapid_key_file=Path("/nonexistent/wiring-test/vapid.pem")),
         # Explicit: CI and developers may have LLM__API_KEY in the environment.
         llm=LlmSettings(api_key=None),
+        # Likewise: the deploy variables SEED_TEST_USERS and SEED_TEST_PASSWORD may be set.
+        seed_test_users=False,
+        seed_test_password=None,
     )
 
 
