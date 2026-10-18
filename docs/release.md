@@ -132,6 +132,8 @@ Postgres создаст рядом **пустой** кластер. Поэтом
    | `LLM__API_KEY` | Variable, masked + protected, необязательная | ключ аккаунта LLM-прокси Spirit для сканирования вещей по фото ([ADR 0015](adr/0015-photo-scanning-with-llm.md)); без него сканирование отвечает 503 `item_recognition_disabled`, остальное работает |
    | `LLM__SCAN_MODEL` | Variable, необязательная | модель для сканирования в формате прокси `<provider>/<model>`; по умолчанию `openrouter/claude-haiku-5-5` |
    | `SAGE__API_KEY` | Variable, masked + protected, необязательная | Spirit API ключ для отправки логов в Sage сервисом `vector` ([ADR 0017](adr/0017-logs-in-sage.md)); без него логи остаются только на VM |
+   | `SEED_TEST_USERS` | Variable, необязательная | `true`: на старте api создаёт пять тестовых аккаунтов с демо-проектами ([ADR 0018](adr/0018-test-accounts-in-prod.md)); по умолчанию `false` |
+   | `SEED_TEST_PASSWORD` | Variable, masked + protected | пароль тестовых аккаунтов, 8–128 символов; обязателен при `SEED_TEST_USERS=true` (deploy падает без него), публичный пароль из каталога в проде не принимается |
    | `SAGE__GROUP` | Variable, необязательная | группа Sage для логов; по умолчанию `hack-led-12` |
 
    Значения без одинарных кавычек. Смена `POSTGRES_PASSWORD` не меняет пароль в уже созданной

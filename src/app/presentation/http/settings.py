@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -9,6 +9,8 @@ class HttpSettings:
     version: str
     cors_origins: tuple[str, ...] = ()
     seed_test_users: bool = False
+    seed_test_password: str | None = field(default=None, repr=False)
+    """None: the default password of the seed catalog."""
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

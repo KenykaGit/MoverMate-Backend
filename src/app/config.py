@@ -13,6 +13,8 @@ from typing import Self
 from pydantic import BaseModel, Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from app.application.seed.catalog import TEST_PASSWORD
+
 # HS256 needs a key at least as long as its 256-bit output (RFC 7518 §3.2).
 MIN_SECRET_KEY_LENGTH = 32
 DEV_SECRET_KEY = "dev-only-insecure-secret-key-change-me!!"  # noqa: S105  # rejected in prod
@@ -135,8 +137,10 @@ class Settings(BaseSettings):
     log_json: bool = True
     cors_origins: list[str] = []
     seed_test_users: bool = False
-    """Register the test accounts with their projects on startup (see SeedTestUsers).
-    Never in prod: the accounts share a public password."""
+    """Register the test accounts with their projects on startup (see SeedTestUsers)."""
+    seed_test_password: SecretStr | None = Field(default=None, min_length=8, max_length=128)
+    """The password of the test accounts. Unset: the public one from the seed catalog,
+    which prod refuses (ADR 0018)."""
 
     database: DatabaseSettings = DatabaseSettings()
     redis: RedisSettings = RedisSettings()
@@ -147,11 +151,20 @@ class Settings(BaseSettings):
     worker: WorkerSettings = WorkerSettings()
     llm: LlmSettings = LlmSettings()
 
+    @field_validator("seed_test_password", mode="before")
+    @classmethod
+    def _empty_password_is_none(cls, value: object) -> object:
+        # Compose passes unset variables as "": that means "the default", not a password.
+        return None if value == "" else value
+
     @model_validator(mode="after")
     def _check_prod_secrets(self) -> Self:
         if self.env is Environment.PROD:
-            if self.seed_test_users:
-                raise ValueError("SEED_TEST_USERS must be false in prod: the passwords are public")
+            if self.seed_test_users and self.seed_test_password in {None, SecretStr(TEST_PASSWORD)}:
+                raise ValueError(
+                    "SEED_TEST_PASSWORD must be set to a private password in prod "
+                    "when SEED_TEST_USERS is on"
+                )
             if self.auth.secret_key.get_secret_value() == DEV_SECRET_KEY:
                 raise ValueError("AUTH__SECRET_KEY must be set to a random value in prod")
             if self.log_json is False:

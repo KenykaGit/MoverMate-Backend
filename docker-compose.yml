@@ -8,6 +8,7 @@ x-app-env: &app-env
   LOG_JSON: ${LOG_JSON:-false}
   CORS_ORIGINS: ${CORS_ORIGINS:-[]}
   SEED_TEST_USERS: ${SEED_TEST_USERS:-false}
+  SEED_TEST_PASSWORD: ${SEED_TEST_PASSWORD:-}
   DATABASE__URL: postgresql+asyncpg://${POSTGRES_USER:-app}:${POSTGRES_PASSWORD:-app}@db:5432/${POSTGRES_DB:-app}
   REDIS__URL: redis://redis:6379/0
   AUTH__SECRET_KEY: ${AUTH__SECRET_KEY:-dev-only-insecure-secret-key-change-me!!}

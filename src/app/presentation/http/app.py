@@ -37,7 +37,7 @@ logger = structlog.get_logger(__name__)
 API_PREFIX = "/api/v1"
 
 
-async def seed_test_users(container: AsyncContainer) -> None:
+async def seed_test_users(container: AsyncContainer, settings: HttpSettings) -> None:
     """Resolve the use case by hand in its own request scope, as a route would.
 
     A failure is logged, not raised: test data must never keep the api from starting.
@@ -45,7 +45,11 @@ async def seed_test_users(container: AsyncContainer) -> None:
     try:
         async with container() as scope:
             seed = await scope.get(SeedTestUsers)
-            await seed(SeedTestUsersDTO())
+            await seed(
+                SeedTestUsersDTO()
+                if settings.seed_test_password is None
+                else SeedTestUsersDTO(password=settings.seed_test_password)
+            )
     except Exception:  # startup must survive e.g. a not yet migrated database
         logger.exception("test_users_seed_failed")
 
@@ -57,7 +61,7 @@ def create_app(container: AsyncContainer, settings: HttpSettings) -> FastAPI:
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         logger.info("startup", version=settings.version)
         if settings.seed_test_users:
-            await seed_test_users(container)
+            await seed_test_users(container, settings)
         yield
         await container.close()  # disposes the engine, closes Redis
         logger.info("shutdown")

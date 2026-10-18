@@ -5,7 +5,8 @@
 #   CORS_ORIGINS, DOMAIN (public name for the TLS certificate), optionally CERTBOT_EMAIL,
 #   RATE_LIMIT__API_PER_MINUTE, RATE_LIMIT__AUTH_PER_MINUTE, RATE_LIMIT__SCAN_PER_MINUTE,
 #   PUSH__VAPID_SUBJECT, LLM__API_KEY (photo scanning), LLM__SCAN_MODEL,
-#   SAGE__API_KEY and SAGE__GROUP (log shipping, the `vector` service).
+#   SAGE__API_KEY and SAGE__GROUP (log shipping, the `vector` service),
+#   SEED_TEST_USERS and SEED_TEST_PASSWORD (test accounts, ADR 0018).
 # Provided by the deploy job: IMAGE (registry path), IMAGE_TAG (git short sha).
 # The deploy job also copies docker/nginx/, docker/certbot/ and docker/vector/ next to this file.
 
@@ -21,6 +22,10 @@ x-app: &app
     APP_VERSION: ${IMAGE_TAG}
     LOG_JSON: "true"
     CORS_ORIGINS: ${CORS_ORIGINS:-[]}
+    # Test accounts with demo projects (ADR 0018): off unless SEED_TEST_USERS=true, which
+    # then requires SEED_TEST_PASSWORD, otherwise the app refuses to start.
+    SEED_TEST_USERS: ${SEED_TEST_USERS:-false}
+    SEED_TEST_PASSWORD: ${SEED_TEST_PASSWORD:-}
     DATABASE__URL: postgresql+asyncpg://${POSTGRES_USER:?}:${POSTGRES_PASSWORD:?}@db:5432/${POSTGRES_DB:?}
     REDIS__URL: redis://redis:6379/0
     AUTH__SECRET_KEY: ${AUTH__SECRET_KEY:?AUTH__SECRET_KEY is required}

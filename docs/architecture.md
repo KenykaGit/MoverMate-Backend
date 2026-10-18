@@ -128,10 +128,12 @@ stdout контейнеров с меткой sage.logs ──Docker API──�
   `GetUser`), а `summaries` использует `inventory` (проверку участия и DTO ссылок на комнаты и
   коробки). Третье исключение — `seed`: `SeedTestUsers` создаёт тестовые данные через
   настоящие use cases `users`, `projects`, `inventory` и `tasks`.
-- **Тестовые аккаунты.** При `SEED_TEST_USERS=true` (локально; в prod настройка запрещена)
+- **Тестовые аккаунты.** При `SEED_TEST_USERS=true` (локально по умолчанию `.env.example`; в prod только с
+  собственным `SEED_TEST_PASSWORD`, [ADR 0018](adr/0018-test-accounts-in-prod.md))
   `create_app` на старте вручную достаёт `SeedTestUsers` из контейнера и вызывает его: пять
   аккаунтов (`test_empty_1`, `test_empty_2` пустые; `test_small`, `test_medium`,
-  `test_large` с проектами разного размера), пароль и данные лежат в `seed/catalog.py`.
+  `test_large` с проектами разного размера), данные лежат в `seed/catalog.py`, пароль — в
+  `SEED_TEST_PASSWORD` (без него публичный из каталога).
   Повторный запуск пропускает существующие аккаунты; сбой не мешает api стартовать.
 - **Проекты** ([ADR 0011](adr/0011-projects-api.md)). Изменяющий use case берёт проект с
   блокировкой строки (`get_by_id(for_update=True)`) через `get_member_project_or_raise`:
@@ -333,6 +335,8 @@ import-linter выразить не может:
 
 ## Известные ограничения
 
+- Тестовые аккаунты в проде (ADR 0018) — настоящие учётные записи: выключение флага их не удаляет,
+  а смена `SEED_TEST_PASSWORD` не меняет пароль уже созданных.
 - Пока Redis недоступен, каждый запрос ждёт таймаут Redis (200 мс, плюс один повтор) на
   каждую операцию. Rate limit и идемпотентность в это время не действуют. Улучшение —
   circuit breaker поверх `REDIS_FAILURES`.

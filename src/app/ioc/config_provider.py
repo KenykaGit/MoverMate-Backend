@@ -21,6 +21,11 @@ def http_settings_from(settings: Settings) -> HttpSettings:
         version=settings.app_version,
         cors_origins=tuple(settings.cors_origins),
         seed_test_users=settings.seed_test_users,
+        seed_test_password=(
+            None
+            if settings.seed_test_password is None
+            else settings.seed_test_password.get_secret_value()
+        ),
     )
 
 
