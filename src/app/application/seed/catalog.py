@@ -1,7 +1,8 @@
 """The test accounts and the moves they own: plain data for SeedTestUsers.
 
-Two accounts are empty on purpose (a fresh user sees empty screens); the other three
-own projects of growing size, so lists, paging and summaries meet different volumes.
+Every account owns projects, of growing size: test_1 has one small move, test_2 and
+test_3 several of different sizes, test_4 a warehouse of 120 boxes and over a thousand
+items (to see lists, paging and summaries under load), test_5 a move that is over.
 """
 
 from dataclasses import dataclass
@@ -60,6 +61,9 @@ class SeedProject:
     boxes: tuple[SeedBox, ...] = ()
     unpacked: tuple[SeedUnpackedItems, ...] = ()
     tasks: tuple[SeedTask, ...] = ()
+    is_finished: bool = False
+    """The move is over: every box is UNPACKED, every item TAKEN_OUT, every task done.
+    Such a project has no `unpacked` items (they never left the old home)."""
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -332,10 +336,124 @@ _STORAGE = SeedProject(
     ),
 )
 
+_THINGS = (
+    "Тарелка", "Чашка", "Ложка", "Книга", "Футболка", "Свитер", "Полотенце", "Лампа",
+    "Кабель", "Игрушка", "Тетрадь", "Ваза", "Рамка", "Подушка", "Плед", "Кастрюля",
+    "Нож", "Часы", "Зарядка", "Фонарик",
+)  # fmt: skip
+
+
+def _warehouse_boxes(
+    count: int, per_box: int, source_rooms: tuple[str, ...], destination_rooms: tuple[str, ...]
+) -> tuple[SeedBox, ...]:
+    """`count` boxes of `per_box` items each, spread over the rooms in turn."""
+    boxes = []
+    for n in range(count):
+        source = source_rooms[n % len(source_rooms)]
+        first = n * per_box
+        boxes.append(
+            SeedBox(
+                source_room=source,
+                destination_room=destination_rooms[n % len(destination_rooms)],
+                title=f"Коробка {n + 1}: {source}",
+                is_fragile=n % 7 == 0,
+                priority=Priority(n % len(Priority)),
+                items=tuple(
+                    SeedItem(
+                        name=f"{_THINGS[(first + k) % len(_THINGS)]} {first + k + 1}",
+                        quantity=1 + k % 5,
+                    )
+                    for k in range(per_box)
+                ),
+            )
+        )
+    return tuple(boxes)
+
+
+_WAREHOUSE_SOURCE_ROOMS = tuple(f"Комната {n}" for n in range(1, 9))
+_WAREHOUSE_DESTINATION_ROOMS = tuple(f"Зона {n}" for n in range(1, 9))
+
+_WAREHOUSE = SeedProject(
+    name="Склад: 120 коробок",
+    days_until_move=40,
+    time_zone="Europe/Moscow",
+    origin_address="Москва, Складочная ул., 1",
+    destination_address="Москва, Варшавское ш., 100",
+    source_rooms=_WAREHOUSE_SOURCE_ROOMS,
+    destination_rooms=_WAREHOUSE_DESTINATION_ROOMS,
+    boxes=_warehouse_boxes(120, 9, _WAREHOUSE_SOURCE_ROOMS, _WAREHOUSE_DESTINATION_ROOMS),
+    unpacked=tuple(
+        SeedUnpackedItems(
+            source_room=room,
+            priority=Priority(n % len(Priority)),
+            items=tuple(
+                SeedItem(name=f"{_THINGS[k % len(_THINGS)]} без коробки {n * 10 + k + 1}")
+                for k in range(10)
+            ),
+        )
+        for n, room in enumerate(_WAREHOUSE_SOURCE_ROOMS[:6])
+    ),
+    tasks=tuple(
+        SeedTask(
+            title=f"Задача {n + 1}",
+            phase=(TaskPhase.BEFORE, TaskPhase.DURING, TaskPhase.AFTER)[n % 3],
+            days_from_move=None if n % 5 == 0 else n % 3 * 3 - 10,
+        )
+        for n in range(40)
+    ),
+)
+
+_FINISHED = SeedProject(
+    name="Переезд завершён",
+    days_until_move=-21,
+    time_zone="Europe/Moscow",
+    origin_address="Тула, пр. Ленина, 7",
+    destination_address="Москва, ул. Профсоюзная, 56",
+    source_rooms=("Кухня", "Гостиная", "Спальня"),
+    destination_rooms=("Кухня", "Гостиная", "Спальня"),
+    is_finished=True,
+    boxes=(
+        SeedBox(
+            source_room="Кухня",
+            destination_room="Кухня",
+            title="Посуда",
+            is_fragile=True,
+            items=_items(("Тарелки", 8), ("Стаканы", 6), "Чайник"),
+        ),
+        SeedBox(
+            source_room="Гостиная",
+            destination_room="Гостиная",
+            title="Книги",
+            items=_items(("Книги", 30), "Настольная игра"),
+        ),
+        SeedBox(
+            source_room="Спальня",
+            destination_room="Спальня",
+            title="Одежда",
+            priority=Priority.HIGH,
+            items=_items(("Футболки", 12), ("Носки", 15), "Пальто"),
+        ),
+        SeedBox(
+            source_room="Спальня",
+            destination_room="Гостиная",
+            title="Документы",
+            priority=Priority.FIRST_NECESSITY,
+            items=_items("Паспорта", "Договор аренды", "Ноутбук"),
+        ),
+    ),
+    tasks=(
+        SeedTask(title="Нанять грузчиков", phase=TaskPhase.BEFORE, days_from_move=-14),
+        SeedTask(title="Упаковать вещи", phase=TaskPhase.BEFORE, days_from_move=-3),
+        SeedTask(title="Погрузить коробки", phase=TaskPhase.DURING, days_from_move=0),
+        SeedTask(title="Подписать акт приёмки квартиры", phase=TaskPhase.DURING, days_from_move=0),
+        SeedTask(title="Распаковать вещи", phase=TaskPhase.AFTER, days_from_move=5),
+    ),
+)
+
 TEST_USERS: tuple[SeedUser, ...] = (
-    SeedUser(username="test_empty_1"),
-    SeedUser(username="test_empty_2"),
-    SeedUser(username="test_small", projects=(_STUDIO,)),
-    SeedUser(username="test_medium", projects=(_APARTMENT, _COUNTRY_HOUSE)),
-    SeedUser(username="test_large", projects=(_FAMILY_HOUSE, _OFFICE, _STORAGE)),
+    SeedUser(username="test_1", projects=(_STUDIO,)),
+    SeedUser(username="test_2", projects=(_APARTMENT, _COUNTRY_HOUSE)),
+    SeedUser(username="test_3", projects=(_FAMILY_HOUSE, _OFFICE, _STORAGE)),
+    SeedUser(username="test_4", projects=(_WAREHOUSE,)),
+    SeedUser(username="test_5", projects=(_FINISHED,)),
 )

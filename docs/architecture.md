@@ -130,11 +130,13 @@ stdout контейнеров с меткой sage.logs ──Docker API──�
   настоящие use cases `users`, `projects`, `inventory` и `tasks`.
 - **Тестовые аккаунты.** При `SEED_TEST_USERS=true` (локально по умолчанию `.env.example`; в prod только с
   собственным `SEED_TEST_PASSWORD`, [ADR 0018](adr/0018-test-accounts-in-prod.md))
-  `create_app` на старте вручную достаёт `SeedTestUsers` из контейнера и вызывает его: пять
-  аккаунтов (`test_empty_1`, `test_empty_2` пустые; `test_small`, `test_medium`,
-  `test_large` с проектами разного размера), данные лежат в `seed/catalog.py`, пароль — в
-  `SEED_TEST_PASSWORD` (без него публичный из каталога).
-  Повторный запуск пропускает существующие аккаунты; сбой не мешает api стартовать.
+  `create_app` на старте вручную достаёт `SeedTestUsers` из контейнера и вызывает его в
+  фоновой задаче (api отвечает на healthcheck, пока данные заполняются): пять аккаунтов
+  `test_1`…`test_5` с проектами разного размера, у `test_4` 120 коробок и 1140 вещей
+  (нагрузка), у `test_5` завершённый переезд (все коробки `UNPACKED`, вещи `TAKEN_OUT`,
+  задачи выполнены). Данные лежат в `seed/catalog.py`, пароль — в `SEED_TEST_PASSWORD`
+  (без него публичный из каталога). Повторный запуск пропускает существующие аккаунты;
+  сбой не мешает api стартовать.
 - **Проекты** ([ADR 0011](adr/0011-projects-api.md)). Изменяющий use case берёт проект с
   блокировкой строки (`get_by_id(for_update=True)`) через `get_member_project_or_raise`:
   не-участник получает тот же `ProjectNotFoundError`, что и для несуществующего проекта.

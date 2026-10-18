@@ -1,5 +1,6 @@
+import asyncio
 from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 
 import structlog
 from dishka import AsyncContainer
@@ -60,9 +61,18 @@ def create_app(container: AsyncContainer, settings: HttpSettings) -> FastAPI:
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         logger.info("startup", version=settings.version)
-        if settings.seed_test_users:
-            await seed_test_users(container, settings)
+        # In the background: filling a heavy account takes a while, and the api must answer
+        # its health checks meanwhile.
+        seeding = (
+            asyncio.create_task(seed_test_users(container, settings))
+            if settings.seed_test_users
+            else None
+        )
         yield
+        if seeding is not None:
+            seeding.cancel()
+            with suppress(asyncio.CancelledError):
+                await seeding
         await container.close()  # disposes the engine, closes Redis
         logger.info("shutdown")
 
